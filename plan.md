@@ -16,7 +16,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 | ~~Which MCP clients~~ | Phase 3 | §15 Q5 | **Decided:** Claude Code only for now, with a static bearer token; OAuth for claude.ai / Desktop can be added later |
 | ~~Export font~~ | Phase 4 | §15 Q6 | **Decided:** Inter for every export in v1; brand fonts per board can come later |
 | ~~One schema per board, or several~~ | Phase 5 | §15 Q7 | **Decided:** one per board, as specced; build on it after real use |
-| What Design is written in | Phase 6 | §15 Q8 | Rust → `board-model` crate; otherwise JSON Schema |
+| ~~What Design is written in~~ | Phase 6 | §15 Q8 | **Decided:** Rust, so Design depends on the `board-model` crate (git tag) |
 | Typeset's actual input format | Phase 7 | §15 Q1 | **Blocks phase 7.** Send a real payload |
 | How Typeset reaches Board (same droplet, network, auth) | Phase 7 | §15 Q2 | |
 
@@ -247,14 +247,24 @@ Files and instructions are ready in `deploy/` (`deploy/README.md` walks through 
 
 **Goal:** Design (and any other project) can read the plan.
 
-- [ ] Feature card content, validation (table and page references) and editor: status, summary, stories, acceptance, table and page chips that pan to the right card (§5.2, §10.3).
-- [ ] `model.rs`: `board_model(board, items, connectors, tables)` (§9.2): tables in name order with filled-in labels and column hashes; pages; features, flows (frames with connectors, as nodes and edges) and notes in reading order; warnings.
-- [ ] `GET /api/boards/{id}/model` with `ETag` and 304; `GET /api/model.schema.json` (unauthenticated).
-- [ ] MCP `get_board_model`.
-- [ ] `board pull <board-id> --into <dir>`: writes `board-model.json`, pretty-printed with stable key order.
+- [x] Feature card content, validation (table and page references) and editor: status, summary, stories, acceptance, table and page chips that pan to the right card (§5.2, §10.3).
+- [x] `model.rs`: `board_model(board, items, connectors, tables)` (§9.2): tables in name order with filled-in labels and column hashes; pages; features, flows (frames with connectors, as nodes and edges) and notes in reading order; warnings.
+- [x] `GET /api/boards/{id}/model` with `ETag` and 304; `GET /api/model.schema.json` (unauthenticated).
+- [x] MCP `get_board_model`.
+- [x] `board pull <board-id> --into <dir>`: writes `board-model.json`, pretty-printed with stable key order.
 - [ ] Publish `board-model` for Design: tag a release so Design can use it as a git dependency (if Rust), or rely on the JSON Schema.
 - [ ] Create a `read` token for Design (`--name design --scope read --actor api`).
-- [ ] Tests: ordering, label defaults, hashes change only when a column's definition does, flow extraction, multiple-sitemap warning, ETag stability.
+- [x] Tests: ordering, label defaults, hashes change only when a column's definition does, flow extraction, multiple-sitemap warning, ETag stability.
+
+**Status:** done (2026-11-06), apart from two steps that need you: pushing the `board-model-v0.1.0` tag (done with the phase commit) and creating Design's read token on the server (`board token create --name design --scope read --actor api`). Notes:
+
+- `board-model` now holds the whole model: `BoardModel`, `ModelTable`, `ModelColumn` (the column plus `hash`), `Feature`, `Flow`, `FlowNode`, `FlowEdge`, `Note`, `FeatureStatus`.
+- Column hashes are the first 8 hex characters of a SHA-256 over the column without its id and without the names filled in on read. Renaming a referenced table doesn't change the hash; changing the column does.
+- The model has no coordinates, so moving cards doesn't change the ETag. The ETag is a hash of the model's JSON.
+- Features drop table and page ids that no longer resolve. Flow nodes keep a shape's `page_id` only if that page exists.
+- `board pull` reads the local database, or fetches from `--from <url>` with `--token` (env `BOARD_URL`/`BOARD_TOKEN`), using `ureq` with rustls. It writes only when the content changed.
+- Feature cards draw their status, progress and summary in exports. Copying one to another board keeps its tables by name and drops its pages.
+- Tests: 6 model unit tests, feature validation tests, `tests/model.rs` (3), and `e2e/model.mjs` (13 browser checks, including a real `board pull`).
 
 **Done when:** `curl` with the Design token returns a model for a real board, a second request returns 304, and `board pull` writes a file that diffs cleanly after a column change.
 

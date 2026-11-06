@@ -33,7 +33,7 @@ export interface ChecklistContent {
 }
 
 export type Kind = "card" | "shape" | "sticky" | "text" | "frame";
-export type CardType = "note" | "checklist" | "schema" | "sitemap";
+export type CardType = "note" | "checklist" | "feature" | "schema" | "sitemap";
 export type ShapeKind = "rect" | "rounded" | "diamond" | "ellipse" | "parallelogram" | "cylinder" | "document";
 export type Color = "grey" | "blue" | "green" | "yellow" | "orange" | "red" | "purple" | "pink";
 export type Align = "left" | "center" | "right";
@@ -44,6 +44,18 @@ export interface ShapeContent {
   text: string;
   /** The sitemap page this journey step is on. */
   page_id?: string;
+}
+
+export type FeatureStatus = "idea" | "planned" | "in_progress" | "done";
+
+export interface FeatureContent {
+  status: FeatureStatus;
+  /** Markdown. */
+  summary: string;
+  stories: string[];
+  acceptance: { text: string; done: boolean }[];
+  table_ids: string[];
+  page_ids: string[];
 }
 
 export interface SchemaCardContent {
@@ -179,6 +191,7 @@ export interface Item {
   content:
     | NoteContent
     | ChecklistContent
+    | FeatureContent
     | SchemaCardContent
     | SitemapContent
     | ShapeContent

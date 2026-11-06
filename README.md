@@ -57,7 +57,7 @@ cargo run -- login                 # prints a one-time login link: open it
 cargo run -- token create --name laptop --scope admin --actor api   # for scripts
 ```
 
-`board --help` lists every command. `pull` arrives in phase 6.
+`board --help` lists every command.
 
 ## Connecting Claude Code
 
@@ -73,5 +73,38 @@ claude mcp add --transport http board https://board.example.com/mcp \
 draw flows from Mermaid, add and edit items and connectors, and restore
 revisions. Everything it does is recorded as Claude, appears live in open tabs
 with a brief highlight, and can be undone from an item's History or the Trash.
+
+## Reading a plan from Design (or any project)
+
+Every board has a **board model**: its tables (labels filled in, a hash per
+column), sitemap pages, features, flows and notes, in one JSON document.
+
+```sh
+board token create --name design --scope read --actor api            # on the server; prints brd_…
+curl -H "Authorization: Bearer brd_…" https://board.example.com/api/boards/<id>/model
+```
+
+The response has an `ETag`; send it back as `If-None-Match` and an unchanged
+board answers `304`. The JSON Schema is at `/api/model.schema.json` (no login).
+
+To commit the plan into a repo, so builds don't depend on Board being up:
+
+```sh
+board pull <board-id> --into . --from https://board.example.com --token brd_…   # or BOARD_URL / BOARD_TOKEN
+```
+
+That writes `board-model.json`, pretty-printed in a stable order, and leaves it
+alone when nothing changed, so a column change shows up as a small diff. On the
+server itself, leave out `--from` to read the local database.
+
+Rust projects use the types directly:
+
+```toml
+board-model = { git = "ssh://git@github.com/Chrisgarlick/board.git", tag = "board-model-v0.1.0" }
+```
+
+(The repo is private, so Cargo fetches over SSH; if it can't find your key, set
+`CARGO_NET_GIT_FETCH_WITH_CLI=true`.) Claude in another project can call the
+MCP tool `get_board_model` instead.
 
 Deploying to a server: see [`deploy/README.md`](deploy/README.md).

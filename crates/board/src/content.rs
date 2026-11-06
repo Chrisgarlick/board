@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 use crate::schema;
-use board_model::SitemapNode;
+use board_model::{FeatureStatus, SitemapNode};
 
 /// Largest allowed content, as serialised JSON.
 pub const MAX_CONTENT_BYTES: usize = 512 * 1024;
@@ -73,6 +73,7 @@ pub enum CardType {
     Checklist,
     Schema,
     Sitemap,
+    Feature,
 }
 
 impl CardType {
@@ -82,6 +83,7 @@ impl CardType {
             Self::Checklist => "checklist",
             Self::Schema => "schema",
             Self::Sitemap => "sitemap",
+            Self::Feature => "feature",
         }
     }
 
@@ -91,25 +93,26 @@ impl CardType {
             "checklist" => Ok(Self::Checklist),
             "schema" => Ok(Self::Schema),
             "sitemap" => Ok(Self::Sitemap),
-            "feature" | "diagram" => Err(AppError::invalid(
+            "feature" => Ok(Self::Feature),
+            "diagram" => Err(AppError::invalid(
                 "card_type",
-                format!(
-                    "`{s}` cards arrive in a later phase; note, checklist, schema and sitemap are supported so far"
-                ),
+                "`diagram` cards arrive in a later phase; note, checklist, feature, schema and sitemap are supported so far",
             )),
             _ => Err(AppError::invalid(
                 "card_type",
-                format!("unknown card type `{s}`, expected note, checklist, schema or sitemap"),
+                format!(
+                    "unknown card type `{s}`, expected note, checklist, feature, schema or sitemap"
+                ),
             )),
         }
     }
 
-    /// Schema and sitemap cards refer to their board's tables and pages, so
+    /// Schema, sitemap and feature cards refer to their board's tables and pages, so
     /// they can't move to another board (spec section 6).
     pub fn can_move_between_boards(self) -> bool {
         match self {
             Self::Note | Self::Checklist => true,
-            Self::Schema | Self::Sitemap => false,
+            Self::Schema | Self::Sitemap | Self::Feature => false,
         }
     }
 }
@@ -185,6 +188,39 @@ pub struct SchemaCardContent {
     /// Input only: tables by name, resolved and added to `table_ids`.
     #[serde(default, skip_serializing)]
     pub tables: Vec<String>,
+}
+
+/// A feature card: the unit of feature planning (spec 5.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureContent {
+    #[serde(default)]
+    pub status: FeatureStatus,
+    /// Markdown.
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub stories: Vec<String>,
+    #[serde(default)]
+    pub acceptance: Vec<Acceptance>,
+    #[serde(default)]
+    pub table_ids: Vec<String>,
+    #[serde(default)]
+    pub page_ids: Vec<String>,
+    /// Input only: tables by name.
+    #[serde(default, skip_serializing)]
+    pub tables: Vec<String>,
+    /// Input only: pages by slug.
+    #[serde(default, skip_serializing)]
+    pub pages: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Acceptance {
+    pub text: String,
+    #[serde(default)]
+    pub done: bool,
 }
 
 /// A sitemap card's content as sent: node ids are optional.
@@ -414,6 +450,23 @@ pub fn validate(
                 .join("\n");
             (to_json(&card)?, names, (640.0, 440.0))
         }
+        (Kind::Card, Some(CardType::Feature)) => {
+            let mut f: FeatureContent = parse("content", content)?;
+            f.table_ids = resolve_tables(
+                &f.table_ids,
+                &std::mem::take(&mut f.tables),
+                refs,
+                "table_ids",
+            )?;
+            f.page_ids = resolve_pages(&f.page_ids, &std::mem::take(&mut f.pages), refs)?;
+            let body = std::iter::once(f.summary.as_str())
+                .chain(f.stories.iter().map(String::as_str))
+                .chain(f.acceptance.iter().map(|a| a.text.as_str()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (to_json(&f)?, body, (380.0, 460.0))
+        }
         (Kind::Card, Some(CardType::Sitemap)) => {
             let input: SitemapInput = parse("content", content)?;
             let root = sitemap(input.root, refs)?;
@@ -501,74 +554,83 @@ const CARD_SIZE: (f64, f64) = (320.0, 240.0);
 
 /// Resolve table names to ids and check new ids are tables on the board.
 fn schema_card(card: SchemaCardContent, refs: &Refs) -> AppResult<SchemaCardContent> {
-    let held = refs.current_list("table_ids");
-    let mut ids: Vec<String> = Vec::new();
-    for (i, id) in card.table_ids.iter().enumerate() {
+    Ok(SchemaCardContent {
+        table_ids: resolve_tables(&card.table_ids, &card.tables, refs, "table_ids")?,
+        tables: Vec::new(),
+    })
+}
+
+/// `ids` plus `names` resolved, deduplicated in order. Ids the content
+/// already held are kept even if their table has since been trashed.
+fn resolve_tables(
+    ids: &[String],
+    names: &[String],
+    refs: &Refs,
+    key: &str,
+) -> AppResult<Vec<String>> {
+    let held = refs.current_list(key);
+    let mut out: Vec<String> = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
         let known = refs.trusted
             || held.contains(&id.as_str())
             || refs.tables.iter().any(|t| &t.0 == id && t.2);
         if !known {
             return Err(AppError::invalid(
-                format!("content.table_ids[{i}]"),
+                format!("content.{key}[{i}]"),
                 "no table with this id on the board",
             ));
         }
-        if !ids.contains(id) {
-            ids.push(id.clone());
+        if !out.contains(id) {
+            out.push(id.clone());
         }
     }
-    for (i, name) in card.tables.iter().enumerate() {
+    for (i, name) in names.iter().enumerate() {
         let Some(t) = refs
             .tables
             .iter()
             .find(|t| t.2 && t.1.eq_ignore_ascii_case(name))
         else {
-            let mut names: Vec<&str> = refs
+            let mut all: Vec<&str> = refs
                 .tables
                 .iter()
                 .filter(|t| t.2)
                 .map(|t| t.1.as_str())
                 .collect();
-            names.sort_unstable();
+            all.sort_unstable();
             return Err(AppError::invalid(
                 format!("content.tables[{i}]"),
                 format!(
                     "no table called `{name}` on this board{}",
-                    if names.is_empty() {
+                    if all.is_empty() {
                         " (it has none yet; create tables with the tables API)".to_string()
                     } else {
-                        format!(" (tables: {})", names.join(", "))
+                        format!(" (tables: {})", all.join(", "))
                     }
                 ),
             ));
         };
-        if !ids.contains(&t.0) {
-            ids.push(t.0.clone());
+        if !out.contains(&t.0) {
+            out.push(t.0.clone());
         }
     }
-    Ok(SchemaCardContent {
-        table_ids: ids,
-        tables: Vec::new(),
-    })
+    Ok(out)
 }
 
-/// Resolve a shape's `page` (by slug) to `page_id`, and check a new `page_id`.
-fn shape_page(mut shape: ShapeContent, refs: &Refs) -> AppResult<ShapeContent> {
-    if let Some(slug) = shape.page.take() {
-        let wanted = normalise_slug("content.page", &slug)?;
-        let found = refs
-            .pages
-            .iter()
-            .find(|p| p.slug.is_some() && p.slug == wanted);
-        let Some(page) = found else {
+/// The page with this slug on the board's sitemaps, or an error listing them.
+fn page_by_slug<'a>(path: &str, slug: &str, refs: &'a Refs) -> AppResult<&'a PageRef> {
+    let wanted = normalise_slug(path, slug)?;
+    refs.pages
+        .iter()
+        .find(|p| p.slug.is_some() && p.slug == wanted)
+        .ok_or_else(|| {
             let mut slugs: Vec<&str> = refs
                 .pages
                 .iter()
                 .filter_map(|p| p.slug.as_deref())
                 .collect();
             slugs.sort_unstable();
-            return Err(AppError::invalid(
-                "content.page",
+            AppError::invalid(
+                path,
                 format!(
                     "no page with the slug `{slug}` in this board's sitemap{}",
                     if slugs.is_empty() {
@@ -577,9 +639,40 @@ fn shape_page(mut shape: ShapeContent, refs: &Refs) -> AppResult<ShapeContent> {
                         format!(" (pages: {})", slugs.join(", "))
                     }
                 ),
+            )
+        })
+}
+
+/// A feature's `page_ids` plus `pages` (slugs) resolved, deduplicated.
+fn resolve_pages(ids: &[String], slugs: &[String], refs: &Refs) -> AppResult<Vec<String>> {
+    let held = refs.current_list("page_ids");
+    let mut out: Vec<String> = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        let known =
+            refs.trusted || held.contains(&id.as_str()) || refs.pages.iter().any(|p| &p.id == id);
+        if !known {
+            return Err(AppError::invalid(
+                format!("content.page_ids[{i}]"),
+                "no page with this id in this board's sitemap",
             ));
-        };
-        shape.page_id = Some(page.id.clone());
+        }
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    for (i, slug) in slugs.iter().enumerate() {
+        let page = page_by_slug(&format!("content.pages[{i}]"), slug, refs)?;
+        if !out.contains(&page.id) {
+            out.push(page.id.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve a shape's `page` (by slug) to `page_id`, and check a new `page_id`.
+fn shape_page(mut shape: ShapeContent, refs: &Refs) -> AppResult<ShapeContent> {
+    if let Some(slug) = shape.page.take() {
+        shape.page_id = Some(page_by_slug("content.page", &slug, refs)?.id.clone());
     }
     if let Some(id) = &shape.page_id {
         let known = refs.trusted
@@ -850,6 +943,64 @@ mod tests {
             ..board_refs()
         };
         assert!(card(CardType::Schema, json!({ "table_ids": ["tbl_old"] }), &held).is_ok());
+    }
+
+    #[test]
+    fn features_resolve_tables_and_pages() {
+        let refs = board_refs();
+        let v = card(
+            CardType::Feature,
+            json!({ "status": "planned", "summary": "Pay online", "stories": ["As a customer…"],
+                    "acceptance": [{ "text": "Card payments work" }],
+                    "tables": ["orders"], "pages": ["login"] }),
+            &refs,
+        )
+        .unwrap();
+        let c: Value = serde_json::from_str(&v.content).unwrap();
+        assert_eq!(c["table_ids"], json!(["tbl_orders"]));
+        assert_eq!(c["page_ids"], json!(["pg_01JAAAAAAAAAAAAAAAAAAAAAAA"]));
+        assert_eq!(c["acceptance"][0]["done"], false);
+        assert!(c.get("tables").is_none());
+        assert!(v.search_body.contains("Card payments work"));
+
+        let empty = card(CardType::Feature, json!({}), &refs).unwrap();
+        assert!(
+            empty.content.contains(r#""status":"idea""#),
+            "{}",
+            empty.content
+        );
+        assert_eq!(
+            invalid_path(card(
+                CardType::Feature,
+                json!({ "status": "shipped" }),
+                &refs
+            )),
+            "content.status"
+        );
+        assert_eq!(
+            invalid_path(card(
+                CardType::Feature,
+                json!({ "pages": ["/nope"] }),
+                &refs
+            )),
+            "content.pages[0]"
+        );
+        assert_eq!(
+            invalid_path(card(
+                CardType::Feature,
+                json!({ "page_ids": ["pg_x"] }),
+                &refs
+            )),
+            "content.page_ids[0]"
+        );
+        assert_eq!(
+            invalid_path(card(
+                CardType::Feature,
+                json!({ "tables": ["nope"] }),
+                &refs
+            )),
+            "content.tables[0]"
+        );
     }
 
     #[test]

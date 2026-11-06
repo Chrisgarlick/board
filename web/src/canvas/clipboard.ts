@@ -86,6 +86,13 @@ function adapt(n: NewItem, clip: Clip): NewItem {
     const { page_id: _gone, ...rest } = n.content as { page_id?: string };
     return { ...n, content: rest };
   }
+  if (n.card_type === "feature") {
+    // Pages and table ids from another board mean nothing here.
+    const c = n.content as { table_ids?: string[] };
+    const here = new Set([...tables.value.values()].map((t) => t.name.toLowerCase()));
+    const names = (c.table_ids ?? []).map((id) => clip.tableNames?.[id]).filter((name): name is string => !!name && here.has(name.toLowerCase()));
+    return { ...n, content: { ...(n.content as object), table_ids: [], page_ids: [], tables: names } };
+  }
   if (n.card_type === "schema") {
     const here = new Set([...tables.value.values()].map((t) => t.name.toLowerCase()));
     const ids = (n.content as { table_ids?: string[] }).table_ids ?? [];

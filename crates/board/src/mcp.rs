@@ -52,7 +52,8 @@ Use get_board to see a board; draw flows with draw_flow (Mermaid) or add_items w
 \"auto\"; put drawings meant for a planning document inside a frame. Design data with \
 add_table and update_table (references by table and column name are fine), and show tables \
 on a schema card. Pages go in a sitemap card; link a journey step to its page with the \
-shape's \"page\" (slug). Every change you make is recorded as yours and can be undone by \
+shape's \"page\" (slug). Plan features with feature cards. get_board_model returns \
+the whole plan in the shape Design reads. Every change you make is recorded as yours and can be undone by \
 the user, so act directly rather than asking for permission for ordinary edits.";
 
 type ToolResult = Result<String, String>;
@@ -141,7 +142,7 @@ pub struct NewItemArg {
     pub reference: Option<String>,
     /// card, shape, sticky, text or frame.
     pub kind: String,
-    /// For cards: note, checklist, schema or sitemap.
+    /// For cards: note, checklist, feature, schema or sitemap.
     #[serde(default)]
     pub card_type: Option<String>,
     /// Cards and frames only.
@@ -367,6 +368,7 @@ Item kinds and their content:
 - card with card_type "note": needs "title"; content { "markdown": "…" }
 - card with card_type "checklist": needs "title"; content { "items": [{ "text": "…", "done": false, "group": "optional" }] }
 - card with card_type "schema": needs "title"; content { "tables": ["users", "orders"] } (names; stored as table_ids). Shows those tables of the board schema as an ER diagram. Create tables with add_table first.
+- card with card_type "feature": needs "title"; content { "status": "idea"|"planned"|"in_progress"|"done", "summary": "markdown", "stories": ["As a … I want … so that …"], "acceptance": [{ "text": "…", "done": false }], "tables": ["orders"], "pages": ["/checkout"] } (tables by name and pages by slug; stored as table_ids and page_ids). One card per feature.
 - card with card_type "sitemap": needs "title"; content { "root": { "title": "Home", "slug": "/", "purpose": "…", "children": [ { "title": "Shop", "slug": "/shop", "children": [] } ] } }. Pages get stable ids; when updating, keep each page's "id" (or its slug) so the id survives. One sitemap per board is normal.
 - shapes can link to a sitemap page: add "page": "/login" (its slug) to the shape's content (stored as page_id).
 
@@ -881,6 +883,18 @@ impl BoardMcp {
                 "give item_id or table_id",
             ))),
         }
+    }
+
+    #[tool(
+        description = "The board model: the plan as Design reads it. Tables (labels filled in, a hash per column), pages from the sitemap, features, flows (frames with arrows, as nodes and edges) and notes, in reading order. Use it from another project to read the plan."
+    )]
+    async fn get_board_model(&self, Parameters(p): Parameters<BoardId>) -> ToolResult {
+        let mut conn = self.conn().await?;
+        ok(json!(
+            crate::model::load(&mut conn, &p.board_id)
+                .await
+                .map_err(fail)?
+        ))
     }
 
     #[tool(

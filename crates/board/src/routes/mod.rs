@@ -83,6 +83,7 @@ pub fn api(state: AppState) -> Router<AppState> {
         .route("/tables/{id}/revisions", get(schema::table_revisions))
         .route("/tables/{id}/restore/{rev}", post(schema::restore_table))
         .route("/items/{id}/er", get(schema::item_er))
+        .route("/boards/{id}/model", get(get_model))
         .route("/search", get(search_items))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
@@ -94,6 +95,7 @@ pub fn public() -> Router<AppState> {
     Router::new()
         .route("/login/{code}", get(login))
         .route("/i/{file}", get(images::public_image))
+        .route("/api/model.schema.json", get(model_schema))
 }
 
 pub fn ctx(state: &AppState, caller: Caller) -> Ctx {
@@ -593,6 +595,38 @@ async fn undelete_connector(
     let op = Op::UndeleteConnector { connector: id };
     let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
     Ok(Json(only(unwrap_single(result)?)))
+}
+
+// ---------- The board model (spec 9.2) ----------
+
+/// `GET /api/boards/{id}/model`: the board model, with an `ETag`; a request
+/// carrying the same `If-None-Match` gets 304 and no body.
+async fn get_model(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> AppResult<Response> {
+    let mut conn = state.pool.acquire().await?;
+    let model = crate::model::load(&mut conn, &id).await?;
+    let etag = crate::model::etag(&model);
+    let cache = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "private, no-cache".to_string()),
+    ];
+    let matches = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"));
+    if matches {
+        return Ok((StatusCode::NOT_MODIFIED, cache).into_response());
+    }
+    Ok((cache, Json(model)).into_response())
+}
+
+/// `GET /api/model.schema.json`: JSON Schema for the board model. Public:
+/// it describes the shape, not any board's contents.
+async fn model_schema() -> Json<Value> {
+    Json(json!(schemars::schema_for!(board_model::BoardModel)))
 }
 
 // ---------- Search ----------

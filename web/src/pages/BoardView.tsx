@@ -247,6 +247,10 @@ export function BoardView({ id }: { id: string }) {
     const cards: Record<string, { title: string; content: unknown }> = {
       note: { title: "Note", content: { markdown: "" } },
       checklist: { title: "Checklist", content: { items: [{ text: "", done: false }] } },
+      feature: {
+        title: "Feature",
+        content: { status: "idea", summary: "", stories: [], acceptance: [], table_ids: [], page_ids: [] },
+      },
       schema: { title: "Data model", content: { table_ids: [] } },
       sitemap: { title: "Sitemap", content: { root: { id: pageId(), title: "Home", slug: "/" } } },
     };
@@ -383,7 +387,7 @@ export function BoardView({ id }: { id: string }) {
 
         {itemIds.value.length + frameIds.value.length === 0 && !adding && (
           <p class="mat-hint">
-            Pick a tool on the left, or double-click anywhere to add a note, checklist, schema, sitemap, sticky or shape.
+            Pick a tool on the left, or double-click anywhere to add a note, checklist, feature, schema, sitemap, sticky or shape.
           </p>
         )}
 
@@ -398,6 +402,7 @@ export function BoardView({ id }: { id: string }) {
               [
                 ["note", "Note"],
                 ["checklist", "Checklist"],
+                ["feature", "Feature"],
                 ["schema", "Schema (tables)"],
                 ["sitemap", "Sitemap"],
                 ["sticky", "Sticky note"],

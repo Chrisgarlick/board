@@ -34,6 +34,8 @@ rust-embed = { version = "8.13.0", features = ["mime-guess"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "serde"] }
 rmcp = { version = "3.9.0", features = ["server", "transport-streamable-http-server", "macros"] }
 async-stream = "0.3.6"
+# `board pull --from`: fetch a model from a remote Board over HTTPS.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 futures-util = "0.3.34"
 schemars.workspace = true
 ttf-parser = "0.25.1"

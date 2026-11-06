@@ -1,4 +1,5 @@
-//! Board's published read contract (spec section 9).
+//! Board's published read contract (spec section 9): the board model, and
+//! the schema and sitemap types inside it.
 //!
 //! Design depends on this crate (or on the JSON Schema generated from it), so
 //! it holds plain types with no I/O. Board stores table definitions and
@@ -203,6 +204,154 @@ impl SitemapNode {
     }
 }
 
+// ---------- Features ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeatureStatus {
+    #[default]
+    Idea,
+    Planned,
+    InProgress,
+    Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AcceptanceItem {
+    pub text: String,
+    #[serde(default)]
+    pub done: bool,
+}
+
+// ---------- The board model (spec 9.2) ----------
+
+/// The contract name in every model.
+pub const CONTRACT: &str = "board-model";
+/// Bumped on breaking changes only; additive changes keep it.
+pub const CONTRACT_VERSION: u32 = 1;
+
+/// Everything Design (or anything else) needs to know about a board's plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BoardModel {
+    /// Always `board-model`.
+    pub contract: String,
+    pub contract_version: u32,
+    pub board: ModelBoard,
+    /// Bumps on every table change; cheap to compare.
+    pub schema_version: i64,
+    /// Every live table, in name order.
+    pub tables: Vec<ModelTable>,
+    /// The sitemap's top-level pages (one per sitemap card, in reading order).
+    pub pages: Vec<SitemapNode>,
+    /// Feature cards, in reading order.
+    pub features: Vec<Feature>,
+    /// Frames containing at least one connector, in reading order.
+    pub flows: Vec<Flow>,
+    /// Note cards, in reading order.
+    pub notes: Vec<Note>,
+    /// Things a reader should know (e.g. more than one sitemap).
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelBoard {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The stack this job uses, e.g. "Laravel + MySQL".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelTable {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    pub version: i64,
+    /// Labels are always filled in; references and indexes carry names.
+    pub columns: Vec<ModelColumn>,
+    pub indexes: Vec<SchemaIndex>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelColumn {
+    #[serde(flatten)]
+    pub column: SchemaColumn,
+    /// A short hash of the column's definition (everything except its id
+    /// and the names filled in on read). Changes exactly when the column does.
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Feature {
+    pub id: String,
+    pub title: String,
+    pub status: FeatureStatus,
+    /// Markdown.
+    pub summary: String,
+    #[serde(default)]
+    pub stories: Vec<String>,
+    #[serde(default)]
+    pub acceptance: Vec<AcceptanceItem>,
+    /// Live tables only.
+    #[serde(default)]
+    pub table_ids: Vec<String>,
+    /// Pages that exist in the sitemap only.
+    #[serde(default)]
+    pub page_ids: Vec<String>,
+}
+
+/// A drawn flow: its steps and the arrows between them. No coordinates;
+/// layout is Board's concern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Flow {
+    /// The frame's id.
+    pub id: String,
+    pub title: String,
+    pub nodes: Vec<FlowNode>,
+    pub edges: Vec<FlowEdge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FlowNode {
+    pub id: String,
+    /// `shape` or `card`.
+    pub kind: String,
+    /// For shapes: rect, rounded, diamond, ellipse, parallelogram, cylinder, document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    /// For shapes: the words in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_type: Option<String>,
+    /// For cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The sitemap page this step happens on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FlowEdge {
+    pub from: String,
+    pub to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Note {
+    pub id: String,
+    pub title: String,
+    pub markdown: String,
+}
+
 /// `name` as a label: `created_at` → "Created at", `userId` → "User id".
 pub fn humanise(name: &str) -> String {
     let mut words: Vec<String> = Vec::new();
@@ -283,6 +432,18 @@ mod tests {
         .unwrap();
         let ids: Vec<&str> = tree.walk().iter().map(|n| n.id.as_str()).collect();
         assert_eq!(ids, ["pg_1", "pg_2", "pg_3", "pg_4"]);
+    }
+
+    #[test]
+    fn model_columns_flatten_with_their_hash() {
+        let c: ModelColumn = serde_json::from_str(
+            r#"{ "id": "col_1", "name": "a", "type": "text", "label": "A", "hash": "abc" }"#,
+        )
+        .unwrap();
+        assert_eq!(c.hash, "abc");
+        assert_eq!(c.column.label.as_deref(), Some("A"));
+        let schema = serde_json::to_string(&schemars::schema_for!(BoardModel)).unwrap();
+        assert!(schema.contains("\"hash\"") && schema.contains("in_progress"));
     }
 
     #[test]

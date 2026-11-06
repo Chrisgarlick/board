@@ -1,7 +1,7 @@
 # Planning Board: Technical Spec (Rust)
 
 Working name: **Board** (rename freely).
-Status: draft v0.7. Section 16 lists what changed in each version. The build order lives in `plan.md`.
+Status: draft v0.8. Section 16 lists what changed in each version. The build order lives in `plan.md`.
 
 ---
 
@@ -935,7 +935,8 @@ Board never calls Design and doesn't depend on it. Board's one obligation is a s
 - `pages` come from the board's sitemap card. With more than one sitemap card, their pages are concatenated in reading order and `warnings` says so.
 - `flows` are frames that contain at least one connector: their members as nodes (no coordinates: layout is Board's concern, not Design's) and the connectors between members as edges. Stickies and free text are left out.
 - `features`, `flows` and `notes` are in reading order.
-- `hash` on each column is a short hash of the column's definition (everything except `id`), so a change to a column is detectable without diffing.
+- `hash` on each column is a short hash of the column's definition (everything except `id`, and without the names filled in on read): the first 8 hex characters of a SHA-256 over its JSON, so it's stable across Board versions.
+- The model has no coordinates, so moving things around doesn't change it (or its `ETag`). Features and flow nodes leave out table and page ids that no longer resolve.
 - The response has an `ETag`; Design polls with `If-None-Match` and gets 304 when nothing has changed. Design can also subscribe to the board's SSE stream and refetch on relevant events.
 
 ### 9.3 Field provenance
@@ -956,7 +957,7 @@ Pages work the same way with `page_id`. This only works because ids survive edit
 - **Images for Design:** Design embeds Board's flows and ER diagrams with signed image URLs (8.2), so they stay current without copying.
 - **Into the client PDF:** Design exposes its own Typeset document (its screens as `image` blocks). Typeset joins it with Board's document (8.3). That's a convention for Design's spec; Board doesn't need to know about it.
 - **Claude Code in another project:** uses Board's MCP server and `get_board_model`, so a session working on Design or a client build can read the plan directly.
-- **A repo (committed):** `board pull <board-id> --into <dir>` writes `board-model.json` (pretty-printed, stable key order) so changes show up as diffs and builds don't depend on Board being up. Same JSON as the endpoint.
+- **A repo (committed):** `board pull <board-id> --into <dir>` writes `board-model.json` (pretty-printed, stable key order) so changes show up as diffs and builds don't depend on Board being up. Same JSON as the endpoint. It reads the local database on the server, or a remote Board with `--from <url> --token <read token>`, and leaves the file untouched when nothing changed.
 - **Types:** if Design is Rust, it depends on the `board-model` crate via a git tag. Otherwise it generates types from `/api/model.schema.json`.
 
 Evolution follows the same rules as `typeset-doc`: additive changes don't bump `contract_version`, breaking ones do, and clients ignore fields they don't know.
@@ -1113,12 +1114,17 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 5. ~~Which MCP clients?~~ **Decided:** Claude Code only for now, with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector would mean adding OAuth to `/mcp`; revisit when needed.
 6. ~~Fonts?~~ **Decided:** Inter for every export in v1. A brand font per board can be added later; every export path would need to honour it.
 7. ~~One schema per board?~~ **Decided:** one schema per board, as specced. Several schemas on one board (for example, comparing two designs of the same data) would mean tables gaining a `schema_id` and schema cards belonging to one schema; revisit after real use.
-8. What is Design built in? If Rust, it uses the `board-model` crate; otherwise it generates types from the JSON Schema.
+8. ~~What is Design built in?~~ **Decided:** Rust. Design depends on the `board-model` crate through a git tag (`board-model-vX.Y.Z`); the JSON Schema stays available for anything else.
 9. ~~Shape set and nested frames?~~ **Decided:** the shape set as specced, and no nested frames in v1. Adding nesting later means one migration (rebuild `items` without the `frame_id` CHECK, since SQLite can't drop a constraint in place) and changing membership to the innermost containing frame.
 
 ---
 
 ## 16. Changes
+
+### v0.8
+
+- **Decided:** Design is Rust and depends on the `board-model` crate (Q8).
+- **Board model details:** how column hashes are computed, no coordinates (so moving cards doesn't change the ETag), unresolved ids dropped, `board pull --from` for remote boards.
 
 ### v0.7
 

@@ -14,14 +14,15 @@ import {
   takeTheirs,
   type ItemState,
 } from "../store";
-import type { ChecklistContent, NoteContent, SitemapContent } from "../types";
+import type { ChecklistContent, FeatureContent, NoteContent, SitemapContent } from "../types";
 import { ChecklistBody } from "./ChecklistBody";
+import { FeatureBody } from "./FeatureBody";
 import { liveRect, moving, pressItem, pressResize } from "./interact";
 import { NoteBody } from "./NoteBody";
 import { SchemaBody } from "./SchemaBody";
 import { SitemapBody } from "./SitemapBody";
 
-const LABELS = { note: "Note", checklist: "Checklist", schema: "Schema", sitemap: "Sitemap" } as const;
+const LABELS = { note: "Note", checklist: "Checklist", feature: "Feature", schema: "Schema", sitemap: "Sitemap" } as const;
 
 const MIN_W = 180;
 const MIN_H = 120;
@@ -64,7 +65,7 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
             {title || <span class="placeholder">Untitled</span>}
           </h2>
         )}
-        {item.card_type === "schema" || item.card_type === "sitemap" ? (
+        {item.card_type === "schema" || item.card_type === "sitemap" || item.card_type === "feature" ? (
           <span class="card-kind">{label}</span>
         ) : null}
         <span class="card-meta" aria-live="polite">
@@ -103,6 +104,8 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
         <div class="card-body">
           {item.card_type === "note" ? (
             <NoteBody id={item.id} content={item.content as NoteContent} />
+          ) : item.card_type === "feature" ? (
+            <FeatureBody id={item.id} content={item.content as FeatureContent} />
           ) : item.card_type === "schema" ? (
             <SchemaBody item={item} />
           ) : item.card_type === "sitemap" ? (

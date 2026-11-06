@@ -646,6 +646,68 @@ fn draw_card(out: &mut String, i: &Item, p: &Palette, theme: Theme, tables: &[Bo
                 );
             }
         }
+        Some("feature") => {
+            let status = match str_of(&i.content, "status") {
+                "planned" => "Planned",
+                "in_progress" => "In progress",
+                "done" => "Done",
+                _ => "Idea",
+            };
+            let checks = i
+                .content
+                .get("acceptance")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let met = checks
+                .iter()
+                .filter(|c| c.get("done").and_then(Value::as_bool).unwrap_or(false))
+                .count();
+            let line = if checks.is_empty() {
+                status.to_string()
+            } else {
+                format!("{status}, {met} of {} checks met", checks.len())
+            };
+            text_block(
+                out,
+                &[line],
+                12.0,
+                1.4,
+                Weight::SemiBold,
+                p.ink_soft,
+                i.x + 13.0,
+                "left",
+                body_top,
+            );
+            let summary: String = str_of(&i.content, "summary")
+                .lines()
+                .map(|l| {
+                    l.trim_start_matches(['#', '>', '-', '*', ' '])
+                        .replace("**", "")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let fitted = text::fit(
+                summary.trim(),
+                i.w - 26.0,
+                (body_h - 22.0).max(0.0),
+                13.0,
+                13.0,
+                1.45,
+                Weight::Regular,
+            );
+            text_block(
+                out,
+                &fitted.lines,
+                13.0,
+                1.45,
+                Weight::Regular,
+                p.ink,
+                i.x + 13.0,
+                "left",
+                body_top + 22.0,
+            );
+        }
         Some("sitemap") => {
             // The page tree, indented.
             let mut lines: Vec<(usize, String, String)> = Vec::new();

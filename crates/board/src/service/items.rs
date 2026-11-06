@@ -180,7 +180,7 @@ pub async fn board_of(conn: &mut SqliteConnection, id: &str) -> AppResult<String
 }
 
 /// What an item's content may refer to, loaded only for the kinds that
-/// refer to anything (schema cards, sitemap cards and shapes).
+/// refer to anything (schema, sitemap and feature cards, and shapes).
 async fn refs(
     conn: &mut SqliteConnection,
     board_id: &str,
@@ -194,10 +194,10 @@ async fn refs(
         current,
         ..Refs::default()
     };
-    if card_type == Some(CardType::Schema) {
+    if matches!(card_type, Some(CardType::Schema | CardType::Feature)) {
         refs.tables = tables::names(conn, board_id).await?;
     }
-    if kind == Kind::Shape || card_type == Some(CardType::Sitemap) {
+    if kind == Kind::Shape || matches!(card_type, Some(CardType::Sitemap | CardType::Feature)) {
         refs.pages = pages(conn, board_id).await?;
     }
     Ok(refs)

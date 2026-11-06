@@ -45,13 +45,20 @@ enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
-    /// Write a board's model (`board-model.json`) into a directory.
+    /// Write a board's model (`board-model.json`) into a directory: from
+    /// this machine's database, or from a remote Board with `--from`.
     Pull {
         /// The board to pull.
         board_id: String,
         /// Directory to write into.
         #[arg(long, default_value = ".")]
         into: PathBuf,
+        /// A remote Board, e.g. https://board.example.com. Needs a token.
+        #[arg(long, env = "BOARD_URL")]
+        from: Option<String>,
+        /// A read token for the remote Board.
+        #[arg(long, env = "BOARD_TOKEN", hide_env_values = true)]
+        token: Option<String>,
     },
 }
 
@@ -90,10 +97,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Serve => serve(&cli.config).await,
         Command::Login => login(&cli.config).await,
         Command::Token { command } => token(&cli.config, command).await,
-        Command::Pull { board_id, into } => bail!(
-            "`board pull {board_id} --into {}` arrives in phase 6",
-            into.display()
-        ),
+        Command::Pull {
+            board_id,
+            into,
+            from,
+            token,
+        } => pull(&cli.config, &board_id, &into, from, token).await,
     }
 }
 
@@ -132,6 +141,66 @@ async fn serve(config_path: &Path) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server error")
+}
+
+/// `board pull`: write `board-model.json`, pretty-printed in a stable order
+/// so changes show up as clean diffs. Leaves the file alone when nothing
+/// changed.
+async fn pull(
+    config_path: &Path,
+    board_id: &str,
+    into: &Path,
+    from: Option<String>,
+    token: Option<String>,
+) -> Result<()> {
+    let model: board_model::BoardModel = match from {
+        Some(origin) => {
+            let token = token.context("--from needs a token: pass --token or set BOARD_TOKEN")?;
+            let url = format!(
+                "{}/api/boards/{board_id}/model",
+                origin.trim_end_matches('/')
+            );
+            let body = tokio::task::spawn_blocking(move || fetch(&url, &token)).await??;
+            serde_json::from_str(&body).context("the server's reply isn't a board model")?
+        }
+        None => {
+            let (_config, pool) = open(config_path).await?;
+            let mut conn = pool.acquire().await?;
+            crate::model::load(&mut conn, board_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+        }
+    };
+    let mut json = serde_json::to_string_pretty(&model)?;
+    json.push('\n');
+    std::fs::create_dir_all(into).with_context(|| format!("creating {}", into.display()))?;
+    let path = into.join("board-model.json");
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == json) {
+        println!("{} is up to date.", path.display());
+        return Ok(());
+    }
+    std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
+    println!(
+        "Wrote {} ({} tables, {} pages, {} features, {} flows).",
+        path.display(),
+        model.tables.len(),
+        model.pages.iter().map(|p| p.walk().len()).sum::<usize>(),
+        model.features.len(),
+        model.flows.len()
+    );
+    Ok(())
+}
+
+fn fetch(url: &str, token: &str) -> Result<String> {
+    let mut res = ureq::get(url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::StatusCode(401) => anyhow::anyhow!("the token was refused"),
+            ureq::Error::StatusCode(404) => anyhow::anyhow!("no such board on that server"),
+            other => anyhow::anyhow!("fetching {url}: {other}"),
+        })?;
+    Ok(res.body_mut().read_to_string()?)
 }
 
 async fn login(config_path: &Path) -> Result<()> {
