@@ -1,0 +1,29 @@
+# /etc/systemd/system/board.service
+[Unit]
+Description=Board planning canvas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=board
+Group=board
+WorkingDirectory=/var/lib/board
+ExecStart=/usr/local/bin/board --config /var/lib/board/board.toml serve
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+
+# Hardening: Board only needs to write its own directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/board
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

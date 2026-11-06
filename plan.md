@@ -48,37 +48,45 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 
 ### Backend
 
-- [ ] `migrations/0001_init.sql`: everything in §4.1 (boards, items, connectors, schema_tables, revisions, FTS, sessions, api_tokens). Create the whole schema now, even the parts used later; one initial migration is simpler than five.
-- [ ] `db.rs`: pool with `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, size about 5; a `write_tx()` helper that opens `BEGIN IMMEDIATE` (§4.2). Test two concurrent writers to prove no `SQLITE_BUSY`.
-- [ ] Error type mapping to HTTP: 404, 409 (with current record), 422 (`{ error, path, message }`, §5.5), 413.
-- [ ] `auth.rs`:
-  - [ ] Tokens: create (32 random bytes, base64url, shown once), store sha256, constant-time compare, scope and actor (§3.2).
-  - [ ] Sessions: `board login` creates a one-time code (10 minutes); `/login/{code}` sets the cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, 30 days) and redirects (§3.1).
-  - [ ] Middleware: cookie or bearer → `Caller { scope, actor }`; `Origin` check on writes from cookie sessions; route exemptions (§3.4).
-- [ ] Content types: `ItemContent` for `note` and `checklist` cards only for now, with `deny_unknown_fields` and `serde_path_to_error` (§5.1, §5.5).
-- [ ] Service layer: boards CRUD; items create/get/update (versioned)/geometry/delete/undelete; revisions with 5-minute per-actor coalescing and prune to 20 (§4.3); restore.
-- [ ] Batch endpoint with `ref`s, one transaction (§6 Batch). Build it now: the UI's multi-select and undo depend on it.
-- [ ] REST routes for boards and items (§6), per-route body limits.
-- [ ] Auto-placement for items created without a position (§7).
-- [ ] FTS sync on item writes; `/api/search`.
-- [ ] Trash: soft delete everywhere, `/api/boards/{id}/trash`, daily purge task (items deleted more than 30 days ago) and expired-session cleanup.
-- [ ] Tests: version conflict returns 409 with the current item; revision coalescing (same actor within 5 minutes merges, a different actor starts a new one); batch rollback on failure; soft delete hides items and undelete restores them.
+- [x] `migrations/0001_init.sql`: everything in §4.1 (boards, items, connectors, schema_tables, revisions, FTS, sessions, api_tokens). Create the whole schema now, even the parts used later; one initial migration is simpler than five.
+- [x] `db.rs`: pool with `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, size about 5; a `write_tx()` helper that opens `BEGIN IMMEDIATE` (§4.2). Test two concurrent writers to prove no `SQLITE_BUSY`.
+- [x] Error type mapping to HTTP: 404, 409 (with current record), 422 (`{ error, path, message }`, §5.5), 413.
+- [x] `auth.rs`:
+  - [x] Tokens: create (32 random bytes, base64url, shown once), store sha256, constant-time compare, scope and actor (§3.2).
+  - [x] Sessions: `board login` creates a one-time code (10 minutes); `/login/{code}` sets the cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, 30 days) and redirects (§3.1).
+  - [x] Middleware: cookie or bearer → `Caller { scope, actor }`; `Origin` check on writes from cookie sessions; route exemptions (§3.4).
+- [x] Content types: `ItemContent` for `note` and `checklist` cards only for now, with `deny_unknown_fields` and `serde_path_to_error` (§5.1, §5.5).
+- [x] Service layer: boards CRUD; items create/get/update (versioned)/geometry/delete/undelete; revisions with 5-minute per-actor coalescing and prune to 20 (§4.3); restore.
+- [x] Batch endpoint with `ref`s, one transaction (§6 Batch). Build it now: the UI's multi-select and undo depend on it.
+- [x] REST routes for boards and items (§6), per-route body limits.
+- [x] Auto-placement for items created without a position (§7).
+- [x] FTS sync on item writes; `/api/search`.
+- [x] Trash: soft delete everywhere, `/api/boards/{id}/trash`, daily purge task (items deleted more than 30 days ago) and expired-session cleanup.
+- [x] Tests: version conflict returns 409 with the current item; revision coalescing (same actor within 5 minutes merges, a different actor starts a new one); batch rollback on failure; soft delete hides items and undelete restores them.
 
 ### Frontend
 
-- [ ] Board list page: create, rename, archive, search by title (flat list; clients come later).
-- [ ] Canvas: CSS-transform pan and zoom (scroll, pinch, `Space`-drag), §10.1.
-- [ ] Cards as absolutely positioned elements; drag by header, resize from corner; geometry saved on drag end.
-- [ ] Note editor (textarea plus markdown preview, no raw HTML) and checklist editor.
-- [ ] Content saving: debounced, **one save in flight per item**, next save uses the returned `version`; "changed elsewhere" banner on a real 409 (§10.4).
-- [ ] `X-Client-Id` header on every request (random per tab).
-- [ ] Trash panel with Undelete.
+- [x] Board list page: create, rename, archive, search by title (flat list; clients come later).
+- [x] Canvas: CSS-transform pan and zoom (scroll, pinch, `Space`-drag), §10.1.
+- [x] Cards as absolutely positioned elements; drag by header, resize from corner; geometry saved on drag end.
+- [x] Note editor (textarea plus markdown preview, no raw HTML) and checklist editor.
+- [x] Content saving: debounced, **one save in flight per item**, next save uses the returned `version`; "changed elsewhere" banner on a real 409 (§10.4).
+- [x] `X-Client-Id` header on every request (random per tab).
+- [x] Trash panel with Undelete.
 
 ### Deploy
 
-- [ ] Release build; systemd unit; Caddy (or nginx) with TLS in front; bind to localhost only.
+Files and instructions are ready in `deploy/` (`deploy/README.md` walks through every step). These steps run on your droplet:
+
+- [ ] Release build; systemd unit (`deploy/board.service`); Caddy with TLS in front (`deploy/Caddyfile`); bind to localhost only.
 - [ ] Create your login with `board login`; create a `laptop` admin token for scripts.
-- [ ] Nightly `sqlite3 board.db ".backup …"` via cron, copied off the droplet, 14 days kept. Do a test restore once.
+- [ ] Nightly `scripts/backup.sh` via cron, copied off the droplet, 14 days kept. Do a test restore once. (The backup and restore round trip is tested locally.)
+
+**Status:** code done (2026-11-06); deploy is yours to run. Also added beyond the list:
+
+- `login_codes` table for one-time links; `GET /api/me` and `POST /api/logout`.
+- Browser tests (`e2e/`, run with `./scripts/e2e.sh`): 19 checks covering login, notes, checklists, drag, resize, reload, two-tab conflicts, trash and zoom.
+- Logs go to stderr, so `board token create` and `board login` output can be captured safely.
 
 **Done when:** you can log in at your Board domain, make a board, add and drag notes and checklists, edit them from two tabs and see a conflict banner, delete and undelete a card, and last night's backup restores.
 

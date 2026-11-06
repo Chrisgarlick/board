@@ -41,5 +41,21 @@ To run them automatically before every push:
 git config core.hooksPath .githooks     # once per clone; skip a push with --no-verify
 ```
 
-`board --help` lists the CLI commands. `login`, `token` and `pull` are stubs
-until phases 1 and 6.
+Browser tests (Playwright, kept out of the normal checks so they never download a browser):
+
+```sh
+(cd e2e && npm install && npx playwright install chromium)   # once
+./scripts/e2e.sh
+```
+
+## Running it
+
+```sh
+cargo run -- serve                 # in one terminal
+cargo run -- login                 # prints a one-time login link: open it
+cargo run -- token create --name laptop --scope admin --actor api   # for scripts
+```
+
+`board --help` lists every command. `pull` arrives in phase 6.
+
+Deploying to a server: see [`deploy/README.md`](deploy/README.md).

@@ -13,6 +13,10 @@ await copyFile("src/index.html", "dist/index.html");
 const options = {
   entryPoints: { app: "src/main.tsx", styles: "src/styles.css" },
   jsx: "automatic",
+  // Font files from @fontsource, copied next to the bundle.
+  loader: { ".woff2": "file", ".woff": "file" },
+  assetNames: "assets/[name]-[hash]",
+  publicPath: "/",
   jsxImportSource: "preact",
   outdir: "dist",
   bundle: true,

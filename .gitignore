@@ -6,3 +6,7 @@ web/dist/
 *.db-wal
 board.toml
 .DS_Store
+
+# Browser tests
+e2e/node_modules/
+e2e/screenshots/
