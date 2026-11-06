@@ -6,6 +6,7 @@ use sqlx::SqliteConnection;
 
 use crate::content::MAX_TITLE_CHARS;
 use crate::error::{AppError, AppResult};
+use crate::service::connectors::{self, Connector};
 use crate::service::items::{self, Item};
 use crate::service::search;
 use crate::types::{Ctx, new_id};
@@ -38,8 +39,7 @@ pub struct BoardSummary {
 pub struct FullBoard {
     pub board: Board,
     pub items: Vec<Item>,
-    /// Arrive in phase 2.
-    pub connectors: Vec<Value>,
+    pub connectors: Vec<Connector>,
     /// Arrive in phase 5.
     pub tables: Vec<Value>,
 }
@@ -87,10 +87,11 @@ pub async fn get(conn: &mut SqliteConnection, id: &str) -> AppResult<Board> {
 pub async fn get_full(conn: &mut SqliteConnection, id: &str) -> AppResult<FullBoard> {
     let board = get(conn, id).await?;
     let items = items::list_live(conn, id).await?;
+    let connectors = connectors::list_live(conn, id).await?;
     Ok(FullBoard {
         board,
         items,
-        connectors: Vec::new(),
+        connectors,
         tables: Vec::new(),
     })
 }

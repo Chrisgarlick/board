@@ -1,9 +1,6 @@
 //! Item content: the typed shapes stored in `items.content`, and their
 //! validation (spec sections 5.1, 5.2 and 5.5).
 //!
-//! Phase 1 supports note and checklist cards. Other kinds and card types are
-//! added in later phases by extending the enums here.
-//!
 //! Validation parses the JSON into typed structs with
 //! `deny_unknown_fields` (so typos are errors, not silently dropped) via
 //! `serde_path_to_error` (so errors name the field). The typed value is then
@@ -25,34 +22,45 @@ pub const MAX_TITLE_CHARS: usize = 200;
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Card,
+    Shape,
+    Sticky,
+    Text,
+    Frame,
 }
 
 impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Card => "card",
+            Self::Shape => "shape",
+            Self::Sticky => "sticky",
+            Self::Text => "text",
+            Self::Frame => "frame",
         }
     }
 
     pub fn parse(s: &str) -> AppResult<Self> {
         match s {
             "card" => Ok(Self::Card),
-            "shape" | "sticky" | "text" | "frame" => Err(AppError::invalid(
-                "kind",
-                format!("`{s}` items arrive in phase 2; only `card` is supported so far"),
-            )),
+            "shape" => Ok(Self::Shape),
+            "sticky" => Ok(Self::Sticky),
+            "text" => Ok(Self::Text),
+            "frame" => Ok(Self::Frame),
             _ => Err(AppError::invalid(
                 "kind",
-                format!("unknown kind `{s}`, expected `card`"),
+                format!("unknown kind `{s}`, expected card, shape, sticky, text or frame"),
             )),
         }
     }
 
-    /// Default size when a client doesn't give one.
-    pub fn default_size(self) -> (f64, f64) {
-        match self {
-            Self::Card => (320.0, 240.0),
-        }
+    /// Cards and frames have a title; the others hold their text in content.
+    fn has_title(self) -> bool {
+        matches!(self, Self::Card | Self::Frame)
+    }
+
+    /// `align` is meaningful for shapes and free text only (spec 5.2).
+    fn allows_align(self) -> bool {
+        matches!(self, Self::Shape | Self::Text)
     }
 }
 
@@ -87,6 +95,15 @@ impl CardType {
             )),
         }
     }
+
+    /// Card types that refer to their board's tables or pages and so can't
+    /// move to another board (spec section 6). None exist yet; schema,
+    /// feature and sitemap cards will.
+    pub fn can_move_between_boards(self) -> bool {
+        match self {
+            Self::Note | Self::Checklist => true,
+        }
+    }
 }
 
 // ---------- Content shapes ----------
@@ -111,6 +128,71 @@ pub struct ChecklistItem {
     pub done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+}
+
+/// The flowchart shape set (spec 5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeKind {
+    Rect,
+    Rounded,
+    Diamond,
+    Ellipse,
+    Parallelogram,
+    Cylinder,
+    Document,
+}
+
+impl ShapeKind {
+    pub fn default_size(self) -> (f64, f64) {
+        match self {
+            Self::Rect | Self::Rounded | Self::Parallelogram | Self::Document => (160.0, 72.0),
+            Self::Diamond => (150.0, 110.0),
+            Self::Ellipse => (150.0, 90.0),
+            Self::Cylinder => (130.0, 100.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeContent {
+    pub shape: ShapeKind,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StickyContent {
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSize {
+    S,
+    #[default]
+    M,
+    L,
+    Xl,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextContent {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub size: TextSize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameContent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 // ---------- Style ----------
@@ -159,6 +241,8 @@ pub struct Valid {
     pub style: Option<String>,
     /// Flattened text for search.
     pub search_body: String,
+    /// Size to use when the client doesn't give one.
+    pub default_size: (f64, f64),
 }
 
 /// Validate everything about an item's title, content and style.
@@ -171,10 +255,17 @@ pub fn validate(
 ) -> AppResult<Valid> {
     let title = validate_title(kind, title)?;
 
-    let (content, search_body) = match (kind, card_type) {
+    if kind != Kind::Card && card_type.is_some() {
+        return Err(AppError::invalid(
+            "card_type",
+            "only cards have a `card_type`",
+        ));
+    }
+
+    let (content, search_body, default_size) = match (kind, card_type) {
         (Kind::Card, Some(CardType::Note)) => {
             let note: NoteContent = parse("content", content)?;
-            (to_json(&note)?, note.markdown.clone())
+            (to_json(&note)?, note.markdown.clone(), CARD_SIZE)
         }
         (Kind::Card, Some(CardType::Checklist)) => {
             let list: ChecklistContent = parse("content", content)?;
@@ -185,10 +276,34 @@ pub fn validate(
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
-            (to_json(&list)?, body)
+            (to_json(&list)?, body, CARD_SIZE)
         }
         (Kind::Card, None) => {
             return Err(AppError::invalid("card_type", "cards need a `card_type`"));
+        }
+        (Kind::Shape, _) => {
+            let shape: ShapeContent = parse("content", content)?;
+            (
+                to_json(&shape)?,
+                shape.text.clone(),
+                shape.shape.default_size(),
+            )
+        }
+        (Kind::Sticky, _) => {
+            let sticky: StickyContent = parse("content", content)?;
+            (to_json(&sticky)?, sticky.text.clone(), (180.0, 180.0))
+        }
+        (Kind::Text, _) => {
+            let text: TextContent = parse("content", content)?;
+            (to_json(&text)?, text.text.clone(), (240.0, 48.0))
+        }
+        (Kind::Frame, _) => {
+            let frame: FrameContent = parse("content", content)?;
+            (
+                to_json(&frame)?,
+                frame.description.clone().unwrap_or_default(),
+                (800.0, 600.0),
+            )
         }
     };
     if content.len() > MAX_CONTENT_BYTES {
@@ -202,10 +317,10 @@ pub fn validate(
         None | Some(Value::Null) => None,
         Some(value) => {
             let style: Style = parse("style", value)?;
-            if kind == Kind::Card && style.align.is_some() {
+            if style.align.is_some() && !kind.allows_align() {
                 return Err(AppError::invalid(
                     "style.align",
-                    "`align` applies to shapes and text, not cards",
+                    format!("`align` applies to shapes and text, not {}s", kind.as_str()),
                 ));
             }
             if style == Style::default() {
@@ -223,22 +338,34 @@ pub fn validate(
         content,
         style,
         search_body,
+        default_size,
     })
 }
 
+const CARD_SIZE: (f64, f64) = (320.0, 240.0);
+
 fn validate_title(kind: Kind, title: Option<&str>) -> AppResult<Option<String>> {
-    match kind {
-        Kind::Card => {
-            let title = title.ok_or_else(|| AppError::invalid("title", "cards need a title"))?;
-            if title.chars().count() > MAX_TITLE_CHARS {
-                return Err(AppError::invalid(
-                    "title",
-                    format!("titles are at most {MAX_TITLE_CHARS} characters"),
-                ));
-            }
-            Ok(Some(title.to_string()))
+    if !kind.has_title() {
+        if title.is_some() {
+            return Err(AppError::invalid(
+                "title",
+                format!(
+                    "{}s don't have a title; put the words in `content.text`",
+                    kind.as_str()
+                ),
+            ));
         }
+        return Ok(None);
     }
+    let title = title
+        .ok_or_else(|| AppError::invalid("title", format!("{}s need a title", kind.as_str())))?;
+    if title.chars().count() > MAX_TITLE_CHARS {
+        return Err(AppError::invalid(
+            "title",
+            format!("titles are at most {MAX_TITLE_CHARS} characters"),
+        ));
+    }
+    Ok(Some(title.to_string()))
 }
 
 /// Deserialise `value` into `T`, with errors that name the failing field.
@@ -271,6 +398,13 @@ mod tests {
             &content,
             None,
         )
+    }
+
+    fn invalid_path<T: std::fmt::Debug>(r: AppResult<T>) -> String {
+        match r {
+            Err(AppError::Invalid { path, .. }) => path,
+            other => panic!("expected invalid, got {other:?}"),
+        }
     }
 
     #[test]
@@ -319,58 +453,121 @@ mod tests {
 
     #[test]
     fn style_rules() {
-        let bad_color = validate(
-            Kind::Card,
-            Some(CardType::Note),
-            Some("n"),
-            &json!({ "markdown": "" }),
-            Some(&json!({ "color": "teal" })),
+        let card = |style: Value| {
+            validate(
+                Kind::Card,
+                Some(CardType::Note),
+                Some("n"),
+                &json!({ "markdown": "" }),
+                Some(&style),
+            )
+        };
+        assert_eq!(
+            invalid_path(card(json!({ "color": "teal" }))),
+            "style.color"
         );
-        assert!(
-            matches!(bad_color, Err(AppError::Invalid { ref path, .. }) if path == "style.color")
+        assert_eq!(
+            invalid_path(card(json!({ "align": "left" }))),
+            "style.align"
         );
+        assert_eq!(card(json!({})).unwrap().style, None);
 
-        let align_on_card = validate(
-            Kind::Card,
-            Some(CardType::Note),
-            Some("n"),
-            &json!({ "markdown": "" }),
-            Some(&json!({ "align": "left" })),
-        );
-        assert!(
-            matches!(align_on_card, Err(AppError::Invalid { ref path, .. }) if path == "style.align")
-        );
-
-        // An empty style is stored as no style.
-        let empty = validate(
-            Kind::Card,
-            Some(CardType::Note),
-            Some("n"),
-            &json!({ "markdown": "" }),
-            Some(&json!({})),
+        // Shapes and text may be aligned.
+        let shape = validate(
+            Kind::Shape,
+            None,
+            None,
+            &json!({ "shape": "rect", "text": "Pay" }),
+            Some(&json!({ "align": "left", "color": "green" })),
         )
         .unwrap();
-        assert_eq!(empty.style, None);
+        assert_eq!(
+            shape.style.as_deref(),
+            Some(r#"{"color":"green","align":"left"}"#)
+        );
+        let sticky = validate(
+            Kind::Sticky,
+            None,
+            None,
+            &json!({ "text": "idea" }),
+            Some(&json!({ "align": "left" })),
+        );
+        assert_eq!(invalid_path(sticky), "style.align");
     }
 
     #[test]
-    fn cards_need_a_title_and_a_type() {
-        assert!(matches!(
-            validate(Kind::Card, Some(CardType::Note), None, &json!({ "markdown": "" }), None),
-            Err(AppError::Invalid { ref path, .. }) if path == "title"
-        ));
-        assert!(matches!(
-            validate(Kind::Card, None, Some("t"), &json!({}), None),
-            Err(AppError::Invalid { ref path, .. }) if path == "card_type"
-        ));
+    fn titles_belong_to_cards_and_frames_only() {
+        assert_eq!(
+            invalid_path(validate(
+                Kind::Card,
+                Some(CardType::Note),
+                None,
+                &json!({ "markdown": "" }),
+                None
+            )),
+            "title"
+        );
+        assert_eq!(
+            invalid_path(validate(Kind::Frame, None, None, &json!({}), None)),
+            "title"
+        );
+        assert_eq!(
+            invalid_path(validate(
+                Kind::Shape,
+                None,
+                Some("Pay"),
+                &json!({ "shape": "rect" }),
+                None
+            )),
+            "title"
+        );
+        assert_eq!(
+            invalid_path(validate(Kind::Card, None, Some("t"), &json!({}), None)),
+            "card_type"
+        );
+        assert_eq!(
+            invalid_path(validate(
+                Kind::Sticky,
+                Some(CardType::Note),
+                None,
+                &json!({}),
+                None
+            )),
+            "card_type"
+        );
     }
 
     #[test]
-    fn later_kinds_say_when_they_arrive() {
-        let AppError::Invalid { message, .. } = Kind::parse("shape").unwrap_err() else {
-            panic!()
+    fn shapes_have_their_own_default_sizes() {
+        let size = |shape: &str| {
+            validate(Kind::Shape, None, None, &json!({ "shape": shape }), None)
+                .unwrap()
+                .default_size
         };
-        assert!(message.contains("phase 2"));
+        assert_eq!(size("rect"), (160.0, 72.0));
+        assert_eq!(size("diamond"), (150.0, 110.0));
+        assert_eq!(size("cylinder"), (130.0, 100.0));
+        assert_eq!(
+            invalid_path(validate(
+                Kind::Shape,
+                None,
+                None,
+                &json!({ "shape": "star" }),
+                None
+            )),
+            "content.shape"
+        );
+    }
+
+    #[test]
+    fn text_and_sticky_defaults_are_filled_in() {
+        let text = validate(Kind::Text, None, None, &json!({ "text": "Phase 1" }), None).unwrap();
+        assert_eq!(text.content, r#"{"text":"Phase 1","size":"m"}"#);
+        let sticky = validate(Kind::Sticky, None, None, &json!({}), None).unwrap();
+        assert_eq!(sticky.content, r#"{"text":""}"#);
+        let frame = validate(Kind::Frame, None, Some("Checkout"), &json!({}), None).unwrap();
+        assert_eq!(frame.content, "{}");
+        assert_eq!(frame.default_size, (800.0, 600.0));
     }
 
     #[test]

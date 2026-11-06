@@ -757,3 +757,585 @@ body.is-dragging {
   user-select: none;
   cursor: grabbing;
 }
+
+/* ======================================================================
+   Phase 2: drawing
+   ====================================================================== */
+
+/* Palette (spec 5.2). Each colour has a fill (tint) and an ink (lines,
+   text). Items without a colour use the card surface and ink. */
+.item {
+  --fill: var(--card);
+  --line: var(--ink);
+}
+.c-grey { --fill: #eef1ee; --line: #5d6a63; }
+.c-blue { --fill: #dde9f6; --line: #2f5f8f; }
+.c-green { --fill: #dcefdc; --line: #2f6d3c; }
+.c-yellow { --fill: #fbefb8; --line: #7a5d0e; }
+.c-orange { --fill: #fbe2c8; --line: #9a5317; }
+.c-red { --fill: #f8d9d6; --line: #a3322a; }
+.c-purple { --fill: #e7def4; --line: #5f3d8e; }
+.c-pink { --fill: #f7dbe8; --line: #9a3567; }
+
+@media (prefers-color-scheme: dark) {
+  .c-grey { --fill: #27312b; --line: #a9b7ae; }
+  .c-blue { --fill: #1f3346; --line: #8fb8e3; }
+  .c-green { --fill: #1f3a26; --line: #8ccf98; }
+  .c-yellow { --fill: #45391a; --line: #e8cf72; }
+  .c-orange { --fill: #44301d; --line: #f0b27a; }
+  .c-red { --fill: #45231f; --line: #f0948b; }
+  .c-purple { --fill: #33284a; --line: #c3a8ec; }
+  .c-pink { --fill: #432536; --line: #ee9cc3; }
+}
+
+.item {
+  position: absolute;
+}
+
+.item.is-lifted {
+  z-index: 100000;
+}
+
+.item.is-selected:not(.card) {
+  outline: 2px solid var(--mark);
+  outline-offset: 3px;
+}
+
+.item.is-locked {
+  cursor: default;
+}
+
+.lock-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: inset 0 0 0 4px var(--ink), inset 0 0 0 6px var(--card);
+}
+
+.resize-handle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  background: var(--card);
+  border: 2px solid var(--mark);
+  border-radius: 2px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+/* Plain-text editing inside shapes, stickies and text. */
+.text-editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0.5rem 0.6rem !important;
+  font: inherit;
+  color: inherit;
+  line-height: 1.3;
+  overflow: hidden;
+}
+
+.text-editor:focus-visible {
+  outline: none;
+}
+
+.align-left { text-align: left; }
+.align-center { text-align: center; }
+.align-right { text-align: right; }
+
+/* Shapes */
+
+.shape {
+  cursor: grab;
+  touch-action: none;
+  color: var(--line);
+}
+
+.shape-outline {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  fill: var(--fill);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.shape-outline .shape-detail {
+  fill: none;
+}
+
+.shape-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.7rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.shape-text.align-left { justify-content: flex-start; }
+.shape-text.align-right { justify-content: flex-end; }
+
+.shape-diamond .shape-text { padding: 1.2rem 1.6rem; }
+.shape-parallelogram .shape-text { padding-inline: 1.5rem; }
+.shape-cylinder .shape-text { padding-top: 1.1rem; }
+
+.shape .text-editor {
+  display: flex;
+  padding-top: calc(50% - 0.7em) !important;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Stickies: square, flat, coloured. */
+
+/* Stickies are yellow unless given a colour. */
+.sticky:not([class*=" c-"]) {
+  --fill: #fbefb8;
+}
+
+.sticky {
+  background: var(--fill);
+  border-radius: 2px;
+  cursor: grab;
+  touch-action: none;
+  color: var(--ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  .sticky:not([class*=" c-"]) { --fill: #45391a; }
+}
+
+.sticky-text {
+  height: 100%;
+  padding: 0.7rem 0.8rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+}
+
+.sticky .text-editor {
+  padding: 0.7rem 0.8rem !important;
+  line-height: 1.35;
+}
+
+/* Free text: no box. */
+
+.free-text {
+  cursor: grab;
+  touch-action: none;
+  color: var(--line);
+}
+
+.free-text:not([class*=" c-"]) {
+  color: var(--ink);
+}
+
+.free-text-body,
+.free-text .text-editor {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.1rem 0.2rem !important;
+  line-height: 1.2;
+}
+
+.size-s { font-size: 0.8125rem; }
+.size-m { font-size: 1rem; }
+.size-l { font-size: 1.375rem; font-weight: 600; }
+.size-xl { font-size: 2rem; font-weight: 700; letter-spacing: -0.01em; }
+
+/* Frames: a region of the mat with a tab to drag it by. The body is
+   see-through to the pointer, so you can draw and select inside it. */
+
+.frame {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--mat-line-major);
+  border-radius: 4px;
+}
+
+.frame[class*=" c-"] {
+  background: color-mix(in srgb, var(--fill) 45%, transparent);
+  border-color: var(--line);
+}
+
+.frame-tab {
+  position: absolute;
+  left: -1px;
+  bottom: 100%;
+  max-width: 100%;
+  margin-bottom: 4px;
+  padding: 0.15rem 0.5rem;
+  font-size: var(--step-0);
+  font-weight: 650;
+  color: var(--ink);
+  cursor: grab;
+  touch-action: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frame.is-selected {
+  outline-offset: 0 !important;
+}
+
+.frame-title-input {
+  font-weight: 650;
+  padding: 0.1rem 0.3rem !important;
+}
+
+/* Cards take their colour as a header accent. */
+
+.card[class*=" c-"] .card-header {
+  box-shadow: inset 3px 0 0 var(--line);
+}
+
+.card.is-far .card-header {
+  border-bottom: none;
+  height: 100%;
+}
+
+.card.is-far .card-title {
+  font-size: 1.75rem;
+  white-space: normal;
+}
+
+/* Connectors */
+
+.connector-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.connector {
+  --line: #5d6a63;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.connector.c-grey { --line: #5d6a63; }
+
+@media (prefers-color-scheme: dark) {
+  .connector:not([class*=" c-"]),
+  .connector.c-grey { --line: #a9b7ae; }
+}
+
+.connector-line {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+
+.line-dashed .connector-line { stroke-dasharray: 7 5; }
+.line-dotted .connector-line { stroke-dasharray: 1.5 4; stroke-linecap: round; }
+
+.connector-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+
+.connector-head {
+  fill: var(--line);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.connector-head-open {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.connector.is-selected .connector-line {
+  stroke: var(--mark);
+  stroke-width: 2.5;
+}
+
+.connector.is-selected .connector-head,
+.connector.is-selected .connector-head-open {
+  stroke: var(--mark);
+  fill: var(--mark);
+}
+
+.connector.is-selected .connector-head-open {
+  fill: none;
+}
+
+.connector-preview {
+  fill: none;
+  stroke: var(--mark);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.anchor-dots circle {
+  fill: var(--card);
+  stroke: var(--mark);
+  stroke-width: 2;
+}
+
+.connector-label,
+.connector-label-input {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0.05rem 0.4rem !important;
+  font-size: var(--step--1);
+  background: var(--surface) !important;
+  border: 1px solid var(--mat-line-major) !important;
+  border-radius: 3px !important;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.connector-label.is-empty {
+  color: var(--ink-soft);
+  border-style: dashed !important;
+}
+
+.connector-label-input {
+  width: 10rem;
+}
+
+/* ---------- Tools and bars ---------- */
+
+.mat.tool-rect,
+.mat.tool-diamond,
+.mat.tool-ellipse,
+.mat.tool-sticky,
+.mat.tool-text,
+.mat.tool-frame {
+  cursor: crosshair;
+}
+
+.mat.tool-hand {
+  cursor: grab;
+}
+
+.mat.tool-connector .item {
+  cursor: crosshair;
+}
+
+.toolbar {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(30 41 35 / 0.12);
+  z-index: 6;
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink);
+}
+
+.tool:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.tool.is-active {
+  background: var(--ink);
+  color: var(--card);
+}
+
+.tool-icon,
+.shape-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.toolbar-gap {
+  height: 6px;
+}
+
+.style-bar {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 18px));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  box-shadow: var(--lift);
+  white-space: nowrap;
+  z-index: 7;
+  font-size: var(--step--1);
+}
+
+.style-bar.is-below {
+  transform: translate(-50%, 18px);
+}
+
+.style-bar.is-docked {
+  left: 50%;
+  top: 0.75rem;
+  transform: translateX(-50%);
+}
+
+.style-bar button,
+.style-bar select {
+  padding: 0.2rem 0.5rem;
+  font-size: var(--step--1);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.style-bar select {
+  border-color: var(--card-edge);
+  background: var(--card);
+}
+
+.style-bar button:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.style-bar .danger {
+  color: var(--danger);
+}
+
+.swatches {
+  display: flex;
+  gap: 2px;
+  padding-right: 4px;
+  margin-right: 2px;
+  border-right: 1px solid var(--card-edge);
+}
+
+.style-bar .swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--fill);
+  border: 1.5px solid var(--line);
+}
+
+.style-bar .swatch.is-active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--mark);
+}
+
+.segmented {
+  display: flex;
+}
+
+.segmented .is-active {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+/* ---------- Overlay ---------- */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.marquee {
+  position: absolute;
+  border: 1px solid var(--mark);
+  background: color-mix(in srgb, var(--mark) 12%, transparent);
+}
+
+.marquee.is-creating {
+  border-style: dashed;
+  background: none;
+}
+
+.guide {
+  position: absolute;
+  background: var(--mark);
+}
+
+.guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.flow-handle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--mark);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.flow-handle:hover,
+.flow-handle:focus-visible {
+  opacity: 1;
+  background: var(--mark);
+  color: #1e2923;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .flow-handle {
+    transition: background-color 100ms ease-out;
+  }
+}

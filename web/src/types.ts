@@ -31,15 +31,45 @@ export interface ChecklistContent {
   items: ChecklistItem[];
 }
 
+export type Kind = "card" | "shape" | "sticky" | "text" | "frame";
+export type CardType = "note" | "checklist";
+export type ShapeKind = "rect" | "rounded" | "diamond" | "ellipse" | "parallelogram" | "cylinder" | "document";
+export type Color = "grey" | "blue" | "green" | "yellow" | "orange" | "red" | "purple" | "pink";
+export type Align = "left" | "center" | "right";
+export type TextSize = "s" | "m" | "l" | "xl";
+
+export interface ShapeContent {
+  shape: ShapeKind;
+  text: string;
+}
+
+export interface StickyContent {
+  text: string;
+}
+
+export interface TextContent {
+  text: string;
+  size: TextSize;
+}
+
+export interface FrameContent {
+  description?: string;
+}
+
+export interface ItemStyle {
+  color?: Color;
+  align?: Align;
+}
+
 export interface Item {
   id: string;
   board_id: string;
-  kind: "card";
-  card_type: "note" | "checklist";
+  kind: Kind;
+  card_type: CardType | null;
   frame_id: string | null;
   title: string | null;
-  content: NoteContent | ChecklistContent;
-  style: { color?: string } | null;
+  content: NoteContent | ChecklistContent | ShapeContent | StickyContent | TextContent | FrameContent;
+  style: ItemStyle | null;
   x: number;
   y: number;
   w: number;
@@ -56,10 +86,36 @@ export interface Item {
   updated_at: string;
 }
 
+export type Side = "top" | "right" | "bottom" | "left";
+export type AnchorSpec = "auto" | Side;
+
+export interface ConnectorStyle {
+  line?: "solid" | "dashed" | "dotted";
+  start?: "none" | "arrow" | "open_arrow" | "dot";
+  end?: "none" | "arrow" | "open_arrow" | "dot";
+  routing?: "straight" | "elbow" | "curved";
+  color?: Color;
+}
+
+export interface Connector {
+  id: string;
+  board_id: string;
+  from_item: string;
+  to_item: string;
+  from_anchor: AnchorSpec;
+  to_anchor: AnchorSpec;
+  label: string | null;
+  style: ConnectorStyle | null;
+  created_by: Actor;
+  deleted_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FullBoard {
   board: Board;
   items: Item[];
-  connectors: unknown[];
+  connectors: Connector[];
   tables: unknown[];
 }
 

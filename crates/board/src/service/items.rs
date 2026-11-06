@@ -12,7 +12,7 @@ use sqlx::SqliteConnection;
 use crate::content::{self, CardType, Kind};
 use crate::error::{AppError, AppResult};
 use crate::service::placement::{self, Rect};
-use crate::service::{boards, search};
+use crate::service::{boards, frames, search};
 use crate::types::{Ctx, new_id};
 
 /// Revisions by the same actor within this window are merged (spec 4.3).
@@ -22,6 +22,8 @@ const KEEP_REVISIONS: i64 = 20;
 /// Coordinates beyond this are almost certainly a client bug.
 const MAX_COORD: f64 = 10_000_000.0;
 const MAX_SIZE: f64 = 100_000.0;
+/// A sanity limit, not a design target (spec 5.5).
+pub const MAX_ITEMS_PER_BOARD: i64 = 5_000;
 
 /// Every column except the cached SVG, which only the exporter reads.
 const COLS: &str = "id, board_id, kind, card_type, frame_id, title, content, style, x, y, w, h, z, \
@@ -202,13 +204,16 @@ pub struct NewItem {
     pub z: Option<i64>,
 }
 
+/// Create an item. Returns it, plus the ids of other items whose frame
+/// membership changed as a result (when the new item is a frame).
 pub async fn create(
     conn: &mut SqliteConnection,
     ctx: Ctx,
     board_id: &str,
     new: NewItem,
-) -> AppResult<Item> {
+) -> AppResult<(Item, Vec<String>)> {
     boards::require_exists(conn, board_id).await?;
+    require_room(conn, board_id, 1).await?;
 
     let kind = Kind::parse(&new.kind)?;
     let card_type = new.card_type.as_deref().map(CardType::parse).transpose()?;
@@ -220,7 +225,7 @@ pub async fn create(
         new.style.as_ref(),
     )?;
 
-    let (default_w, default_h) = kind.default_size();
+    let (default_w, default_h) = valid.default_size;
     let w = new.w.unwrap_or(default_w);
     let h = new.h.unwrap_or(default_h);
     check_size("w", w)?;
@@ -292,8 +297,34 @@ pub async fn create(
         &valid.search_body,
     )
     .await?;
+    let affected = if kind == Kind::Frame {
+        frames::recompute_board(conn, board_id).await?
+    } else {
+        frames::recompute_item(conn, &id).await?;
+        Vec::new()
+    };
     boards::touch(conn, board_id, ctx).await?;
-    get(conn, &id).await
+    Ok((get(conn, &id).await?, affected))
+}
+
+/// Refuse to grow a board past [`MAX_ITEMS_PER_BOARD`].
+pub async fn require_room(
+    conn: &mut SqliteConnection,
+    board_id: &str,
+    adding: i64,
+) -> AppResult<()> {
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM items WHERE board_id = ? AND deleted_at IS NULL")
+            .bind(board_id)
+            .fetch_one(conn)
+            .await?;
+    if count + adding > MAX_ITEMS_PER_BOARD {
+        return Err(AppError::State {
+            code: "board_full",
+            message: format!("a board holds at most {MAX_ITEMS_PER_BOARD} items"),
+        });
+    }
+    Ok(())
 }
 
 async fn rects(conn: &mut SqliteConnection, board_id: &str) -> AppResult<Vec<Rect>> {
@@ -465,12 +496,15 @@ pub struct Geometry {
     pub locked: Option<bool>,
 }
 
+/// Move, resize, restack or (un)lock an item. Returns it, plus the ids of
+/// other items that changed as a result: a frame's members move with it, and
+/// any move can change frame membership (spec 4.5).
 pub async fn set_geometry(
     conn: &mut SqliteConnection,
     ctx: Ctx,
     id: &str,
     g: Geometry,
-) -> AppResult<Item> {
+) -> AppResult<(Item, Vec<String>)> {
     let current = live_row(conn, id).await?;
 
     let x = g.x.unwrap_or(current.x);
@@ -507,30 +541,92 @@ pub async fn set_geometry(
     .bind(id)
     .execute(&mut *conn)
     .await?;
+
+    let mut affected = Vec::new();
+    if current.kind == "frame" {
+        // Members move with their frame, locked or not.
+        let (dx, dy) = (x - current.x, y - current.y);
+        if dx != 0.0 || dy != 0.0 {
+            let members = frames::members(conn, id).await?;
+            sqlx::query(
+                "UPDATE items SET x = x + ?, y = y + ?, updated_at = ? WHERE frame_id = ? AND deleted_at IS NULL",
+            )
+            .bind(dx)
+            .bind(dy)
+            .bind(ctx.now.to_db())
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+            affected.extend(members);
+        }
+        if moves || z != current.z {
+            affected.extend(frames::recompute_board(conn, &current.board_id).await?);
+        }
+    } else if moves {
+        frames::recompute_item(conn, id).await?;
+    }
+    affected.sort();
+    affected.dedup();
+
     boards::touch(conn, &current.board_id, ctx).await?;
-    get(conn, id).await
+    Ok((get(conn, id).await?, affected))
 }
 
 // ---------- Delete and undelete ----------
 
-/// Move an item to the trash.
-pub async fn delete(conn: &mut SqliteConnection, ctx: Ctx, id: &str) -> AppResult<()> {
-    let current = live_row(conn, id).await?;
-    let now = ctx.now.to_db();
-    sqlx::query("UPDATE items SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(ctx.actor.as_str())
-        .bind(&now)
-        .bind(id)
-        .execute(&mut *conn)
-        .await?;
-    search::unindex_item(conn, id).await?;
-    boards::touch(conn, &current.board_id, ctx).await?;
-    Ok(())
+/// What a delete did.
+#[derive(Debug, Default, Serialize)]
+pub struct Deleted {
+    /// Items moved to the trash: the item, plus a frame's members when
+    /// deleting with contents.
+    pub deleted: Vec<String>,
+    /// Live items whose frame membership changed (a frame's released members).
+    pub affected: Vec<String>,
 }
 
-/// Bring an item back from the trash.
-pub async fn undelete(conn: &mut SqliteConnection, ctx: Ctx, id: &str) -> AppResult<Item> {
+/// Move an item to the trash. Its connectors are hidden until it's restored.
+/// Deleting a frame releases its members unless `with_contents` is set, in
+/// which case they go to the trash too (spec 4.5).
+pub async fn delete(
+    conn: &mut SqliteConnection,
+    ctx: Ctx,
+    id: &str,
+    with_contents: bool,
+) -> AppResult<Deleted> {
+    let current = live_row(conn, id).await?;
+    let mut result = Deleted {
+        deleted: vec![id.to_string()],
+        affected: Vec::new(),
+    };
+    if current.kind == "frame" && with_contents {
+        result.deleted.extend(frames::members(conn, id).await?);
+    }
+
+    let now = ctx.now.to_db();
+    for item in &result.deleted {
+        sqlx::query("UPDATE items SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(ctx.actor.as_str())
+            .bind(&now)
+            .bind(item)
+            .execute(&mut *conn)
+            .await?;
+        search::unindex_item(conn, item).await?;
+    }
+    if current.kind == "frame" {
+        result.affected = frames::recompute_board(conn, &current.board_id).await?;
+    }
+    boards::touch(conn, &current.board_id, ctx).await?;
+    Ok(result)
+}
+
+/// Bring an item back from the trash. Returns it, plus the ids of items whose
+/// frame membership changed (restoring a frame re-captures what's inside it).
+pub async fn undelete(
+    conn: &mut SqliteConnection,
+    ctx: Ctx,
+    id: &str,
+) -> AppResult<(Item, Vec<String>)> {
     let current = row(conn, id).await?.ok_or(AppError::NotFound("item"))?;
     if current.deleted_at.is_none() {
         return Err(AppError::State {
@@ -563,8 +659,15 @@ pub async fn undelete(conn: &mut SqliteConnection, ctx: Ctx, id: &str) -> AppRes
         &valid.search_body,
     )
     .await?;
+    require_room(conn, &current.board_id, 0).await?;
+    let affected = if current.kind == "frame" {
+        frames::recompute_board(conn, &current.board_id).await?
+    } else {
+        frames::recompute_item(conn, id).await?;
+        Vec::new()
+    };
     boards::touch(conn, &current.board_id, ctx).await?;
-    get(conn, id).await
+    Ok((get(conn, id).await?, affected))
 }
 
 /// Hard-delete items that have been in the trash longer than `days`.

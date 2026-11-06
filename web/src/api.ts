@@ -1,7 +1,7 @@
 // The REST API client. Every request carries a per-tab client id, so that
 // from phase 3 the server can tag live updates with who caused them.
 
-import type { Board, BoardSummary, FullBoard, Item, Revision } from "./types";
+import type { Board, BoardSummary, Connector, FullBoard, Item, Revision } from "./types";
 
 const CLIENT_ID = crypto.randomUUID();
 
@@ -53,6 +53,16 @@ export interface ItemPatch {
   style?: unknown;
 }
 
+/** One operation in a batch (crates/board/src/service/batch.rs). */
+export type Op = { op: string } & Record<string, unknown>;
+
+export interface BatchResult {
+  results: unknown[];
+  refs: Record<string, string>;
+  /** Items changed as a side effect (frame members, membership), final state. */
+  affected: Item[];
+}
+
 export interface Geometry {
   x?: number;
   y?: number;
@@ -76,7 +86,8 @@ export const api = {
     request<Board>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => request<void>("DELETE", `/boards/${id}`),
   getBoard: (id: string) => request<FullBoard>("GET", `/boards/${id}`),
-  trash: (id: string) => request<{ items: Item[] }>("GET", `/boards/${id}/trash`),
+  trash: (id: string) => request<{ items: Item[]; connectors: Connector[] }>("GET", `/boards/${id}/trash`),
+  batch: (boardId: string, ops: Op[]) => request<BatchResult>("POST", `/boards/${boardId}/batch`, { ops }),
 
   createItem: (boardId: string, item: Record<string, unknown>) =>
     request<Item>("POST", `/boards/${boardId}/items`, item),

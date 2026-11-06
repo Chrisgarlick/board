@@ -12,7 +12,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 |---|---|---|---|
 | ~~Frontend framework~~ | Phase 1 | §15 Q4 | **Decided:** Preact with signals |
 | ~~Folders or a flat list~~ | Phase 1 | §15 Q3 | **Decided:** flat list with search; attaching boards to clients comes later |
-| Shape set, and whether frames nest | Phase 2 | §15 Q9 | Recommendation: the shape set as specced, no nesting in v1 |
+| ~~Shape set, nested frames~~ | Phase 2 | §15 Q9 | **Decided:** shape set as specced; no nesting in v1, can be added later |
 | Which MCP clients (Claude Code only, or claude.ai / Desktop too) | Phase 3 | §15 Q5 | Claude Code only means a static token; the others probably need OAuth |
 | Default font, and whether boards get a brand font | Phase 4 | §15 Q6 | Recommendation: Inter only for v1 |
 | One schema per board, or several | Phase 5 | §15 Q7 | Recommendation: one, as specced |
@@ -98,30 +98,37 @@ Files and instructions are ready in `deploy/` (`deploy/README.md` walks through 
 
 ### Backend
 
-- [ ] `ItemContent` for `shape`, `sticky`, `text`, `frame`; `style` validation per kind (§5.1, §5.2).
-- [ ] Connectors: create/update/delete (soft), validation (same board, live ends, not self), hidden when an end is deleted (§4.1).
-- [ ] Frame membership computed by the server on every create/move/resize; moving a frame moves its members in the same transaction; delete with or without contents (§4.5).
-- [ ] Cross-board move rules, keeping connectors between moved items (§6).
-- [ ] Item cap per board (5,000).
-- [ ] Tests: membership after moves and resizes; frame move moves members; connector visibility follows soft delete; cross-board move keeps internal connectors and drops the rest.
+- [x] `ItemContent` for `shape`, `sticky`, `text`, `frame`; `style` validation per kind (§5.1, §5.2).
+- [x] Connectors: create/update/delete (soft), validation (same board, live ends, not self), hidden when an end is deleted (§4.1).
+- [x] Frame membership computed by the server on every create/move/resize; moving a frame moves its members in the same transaction; delete with or without contents (§4.5).
+- [x] Cross-board move rules, keeping connectors between moved items (§6).
+- [x] Item cap per board (5,000).
+- [x] Tests: membership after moves and resizes; frame move moves members; connector visibility follows soft delete; cross-board move keeps internal connectors and drops the rest.
 
 ### Shared routing fixtures
 
-- [ ] Write `fixtures/routing.json` now: connector inputs (item rectangles, anchors, routing style) and the expected path points, covering `auto` anchor choice, elbows and curves (§8.1). The UI implements against it in this phase; the Rust renderer uses the same file in phase 4.
+- [x] Write `fixtures/routing.json` now: connector inputs (item rectangles, anchors, routing style) and the expected path points, covering `auto` anchor choice, elbows and curves (§8.1). The UI implements against it in this phase; the Rust renderer uses the same file in phase 4.
 
 ### Frontend
 
-- [ ] Shapes as inline SVG with an HTML text layer; stickies; text; frames drawn beneath members (§10.1).
-- [ ] Connector layer: anchors on hover, pinned vs `auto` ends, straight/elbow/curved routing, labels, arrowheads, dashed/dotted lines. Re-route live while dragging. Passes `fixtures/routing.json`.
-- [ ] Toolbar and shortcuts (§10.2): `V`, `H`, `R`, `D`, `O`, `S`, `T`, `F`, `C`, `K`.
-- [ ] Quick flow: `+` handles, drag-to-create-connected-shape, `Tab` for the next step.
-- [ ] Text editing in shapes, stickies, text and connector labels (`Enter`/double-click, `Esc`).
-- [ ] Selection: click, shift-click, marquee; multi-drag as one batch.
-- [ ] Arrange: snap to grid, alignment guides, align/distribute, z-order, lock.
-- [ ] Clipboard: copy, cut, paste, duplicate, including connectors between selected items.
-- [ ] Style bar: colour, change shape type, connector style.
-- [ ] Local undo/redo stack (100 operations, inverses sent as batches), §10.4.
-- [ ] Zoom to fit / selection; card bodies collapse below 40% zoom; viewport culling past about 500 items.
+- [x] Shapes as inline SVG with an HTML text layer; stickies; text; frames drawn beneath members (§10.1).
+- [x] Connector layer: anchors on hover, pinned vs `auto` ends, straight/elbow/curved routing, labels, arrowheads, dashed/dotted lines. Re-route live while dragging. Passes `fixtures/routing.json`.
+- [x] Toolbar and shortcuts (§10.2): `V`, `H`, `R`, `D`, `O`, `S`, `T`, `F`, `C`, `K`.
+- [x] Quick flow: `+` handles, drag-to-create-connected-shape, `Tab` for the next step.
+- [x] Text editing in shapes, stickies, text and connector labels (`Enter`/double-click, `Esc`).
+- [x] Selection: click, shift-click, marquee; multi-drag as one batch.
+- [x] Arrange: snap to grid, alignment guides, align/distribute, z-order, lock.
+- [x] Clipboard: copy, cut, paste, duplicate, including connectors between selected items.
+- [x] Style bar: colour, change shape type, connector style.
+- [x] Local undo/redo stack (100 operations, inverses sent as batches), §10.4.
+- [x] Zoom to fit / selection; card bodies collapse below 40% zoom; viewport culling past about 500 items.
+
+**Status:** done (2026-11-06). Notes:
+
+- Batches return `affected` items (side effects such as frame members moving) so the UI applies the server's answer instead of repeating its rules.
+- Routing rules and 9 shared fixture cases are in `web/src/canvas/routing.ts` and `fixtures/routing.json`; the UI's test runs them (`npm test` in `web/`, part of `scripts/ci.sh`).
+- Browser tests: `e2e/drawing.mjs` (27 checks) draws a flowchart with the shape tool, quick-flow handles, Tab, the connector tool, marquee, colour, framing, frame drag, undo/redo, delete/undo, duplicate, copy/paste, align, lock, stickies and text.
+- Not built: dragging a connector's ends to reconnect them (the API supports it; the UI can add it later).
 
 **Done when:** you can draw a 15-step flowchart with decisions, labels and a frame around it using mostly the keyboard, move the frame and have everything follow, and undo your way back to empty.
 

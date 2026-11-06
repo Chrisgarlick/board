@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::clock::Clock;
 use crate::error::AppResult;
-use crate::service::items;
+use crate::service::{connectors, items};
 use crate::types::{Actor, Ctx};
 use crate::{auth, db};
 
@@ -33,7 +33,8 @@ pub async fn run(pool: &SqlitePool, clock: &dyn Clock) -> AppResult<()> {
         now: clock.now(),
     };
     let mut tx = db::write_tx(pool).await?;
-    let purged = items::purge_trash(&mut tx, ctx, TRASH_DAYS).await?;
+    let purged = items::purge_trash(&mut tx, ctx, TRASH_DAYS).await?
+        + connectors::purge_trash(&mut tx, ctx, TRASH_DAYS).await?;
     tx.commit().await?;
     auth::purge_expired(pool, ctx.now).await?;
     if purged > 0 {

@@ -15,7 +15,9 @@ use crate::db;
 use crate::error::{ApiJson, AppError, AppResult};
 use crate::service::batch::{self, Batch};
 use crate::service::boards::{self, BoardPatch, NewBoard};
+use crate::service::connectors::{self, ConnectorPatch, NewConnector};
 use crate::service::items::{self, Geometry, ItemPatch, NewItem};
+use crate::service::moves::{self, MoveRequest};
 use crate::service::search;
 use crate::types::{Caller, Ctx};
 
@@ -42,10 +44,17 @@ pub fn api(state: AppState) -> Router<AppState> {
             "/items/{id}",
             get(get_item).patch(update_item).delete(delete_item),
         )
+        .route("/items/move", post(move_items))
         .route("/items/{id}/geometry", patch(set_geometry))
         .route("/items/{id}/undelete", post(undelete_item))
         .route("/items/{id}/revisions", get(revisions))
         .route("/items/{id}/restore/{rev}", post(restore_revision))
+        .route("/boards/{id}/connectors", post(create_connector))
+        .route(
+            "/connectors/{id}",
+            patch(update_connector).delete(delete_connector),
+        )
+        .route("/connectors/{id}/undelete", post(undelete_connector))
         .route("/search", get(search_items))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
@@ -181,8 +190,9 @@ async fn trash(State(state): State<AppState>, Path(id): Path<String>) -> AppResu
     let mut conn = state.pool.acquire().await?;
     boards::require_exists(&mut conn, &id).await?;
     let items = items::list_trash(&mut conn, &id).await?;
+    let connectors = connectors::list_trash(&mut conn, &id).await?;
     Ok(Json(
-        json!({ "items": items, "connectors": [], "tables": [] }),
+        json!({ "items": items, "connectors": connectors, "tables": [] }),
     ))
 }
 
@@ -207,7 +217,7 @@ async fn create_item(
     ApiJson(body): ApiJson<NewItem>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
     let mut tx = db::write_tx(&state.pool).await?;
-    let item = items::create(&mut tx, ctx(&state, caller), &board_id, body).await?;
+    let (item, _) = items::create(&mut tx, ctx(&state, caller), &board_id, body).await?;
     tx.commit().await?;
     Ok((StatusCode::CREATED, Json(json!(item))))
 }
@@ -236,20 +246,27 @@ async fn set_geometry(
     ApiJson(body): ApiJson<Geometry>,
 ) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
-    let item = items::set_geometry(&mut tx, ctx(&state, caller), &id, body).await?;
+    let (item, _) = items::set_geometry(&mut tx, ctx(&state, caller), &id, body).await?;
     tx.commit().await?;
     Ok(Json(json!(item)))
+}
+
+#[derive(Deserialize)]
+struct DeleteQuery {
+    #[serde(default)]
+    with_contents: bool,
 }
 
 async fn delete_item(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
-) -> AppResult<StatusCode> {
+    Query(query): Query<DeleteQuery>,
+) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
-    items::delete(&mut tx, ctx(&state, caller), &id).await?;
+    let deleted = items::delete(&mut tx, ctx(&state, caller), &id, query.with_contents).await?;
     tx.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(json!(deleted)))
 }
 
 async fn undelete_item(
@@ -258,7 +275,7 @@ async fn undelete_item(
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
-    let item = items::undelete(&mut tx, ctx(&state, caller), &id).await?;
+    let (item, _) = items::undelete(&mut tx, ctx(&state, caller), &id).await?;
     tx.commit().await?;
     Ok(Json(json!(item)))
 }
@@ -288,6 +305,65 @@ async fn restore_revision(
     let item = items::restore(&mut tx, ctx(&state, caller), &id, rev, body.version).await?;
     tx.commit().await?;
     Ok(Json(json!(item)))
+}
+
+async fn move_items(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    ApiJson(body): ApiJson<MoveRequest>,
+) -> AppResult<Json<Value>> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let moved = moves::move_items(&mut tx, ctx(&state, caller), body).await?;
+    tx.commit().await?;
+    Ok(Json(json!(moved)))
+}
+
+// ---------- Connectors ----------
+
+async fn create_connector(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    Path(board_id): Path<String>,
+    ApiJson(body): ApiJson<NewConnector>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let connector = connectors::create(&mut tx, ctx(&state, caller), &board_id, body).await?;
+    tx.commit().await?;
+    Ok((StatusCode::CREATED, Json(json!(connector))))
+}
+
+async fn update_connector(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<ConnectorPatch>,
+) -> AppResult<Json<Value>> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let connector = connectors::update(&mut tx, ctx(&state, caller), &id, body).await?;
+    tx.commit().await?;
+    Ok(Json(json!(connector)))
+}
+
+async fn delete_connector(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    connectors::delete(&mut tx, ctx(&state, caller), &id).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn undelete_connector(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let connector = connectors::undelete(&mut tx, ctx(&state, caller), &id).await?;
+    tx.commit().await?;
+    Ok(Json(json!(connector)))
 }
 
 // ---------- Search ----------

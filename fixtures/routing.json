@@ -1,0 +1,132 @@
+{
+  "about": "Connector routing cases shared by the UI (web/src/canvas/routing.ts) and the Rust renderer (phase 4). Both must produce exactly these sides, points and label positions. Rules are documented at the top of routing.ts.",
+  "cases": [
+    {
+      "name": "auto, further apart horizontally: right to left, elbow",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 300, "y": 100, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "right",
+        "to": "left",
+        "points": [{ "x": 100, "y": 25 }, { "x": 200, "y": 25 }, { "x": 200, "y": 125 }, { "x": 300, "y": 125 }],
+        "label": { "x": 200, "y": 75 }
+      }
+    },
+    {
+      "name": "auto, further apart vertically: bottom to top, elbow",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 50, "y": 200, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "bottom",
+        "to": "top",
+        "points": [{ "x": 50, "y": 50 }, { "x": 50, "y": 125 }, { "x": 100, "y": 125 }, { "x": 100, "y": 200 }],
+        "label": { "x": 75, "y": 125 }
+      }
+    },
+    {
+      "name": "aligned items: the elbow collapses to one segment",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 300, "y": 0, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "right",
+        "to": "left",
+        "points": [{ "x": 100, "y": 25 }, { "x": 300, "y": 25 }],
+        "label": { "x": 200, "y": 25 }
+      }
+    },
+    {
+      "name": "straight",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 300, "y": 100, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "straight",
+      "expect": {
+        "from": "right",
+        "to": "left",
+        "points": [{ "x": 100, "y": 25 }, { "x": 300, "y": 125 }],
+        "label": { "x": 200, "y": 75 }
+      }
+    },
+    {
+      "name": "from pinned to bottom, to auto: the target faces the anchor point",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 300, "y": 100, "w": 100, "h": 50 },
+      "from_anchor": "bottom",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "bottom",
+        "to": "left",
+        "points": [{ "x": 50, "y": 50 }, { "x": 50, "y": 125 }, { "x": 300, "y": 125 }],
+        "label": { "x": 137.5, "y": 125 }
+      }
+    },
+    {
+      "name": "both pinned, right to top: one corner",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 300, "y": 100, "w": 100, "h": 50 },
+      "from_anchor": "right",
+      "to_anchor": "top",
+      "routing": "elbow",
+      "expect": {
+        "from": "right",
+        "to": "top",
+        "points": [{ "x": 100, "y": 25 }, { "x": 350, "y": 25 }, { "x": 350, "y": 100 }],
+        "label": { "x": 262.5, "y": 25 }
+      }
+    },
+    {
+      "name": "curved, close items: control points 40 out from each anchor",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 150, "y": 0, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "curved",
+      "expect": {
+        "from": "right",
+        "to": "left",
+        "points": [{ "x": 100, "y": 25 }, { "x": 150, "y": 25 }],
+        "curve": { "c1": { "x": 140, "y": 25 }, "c2": { "x": 110, "y": 25 } },
+        "label": { "x": 125, "y": 25 }
+      }
+    },
+    {
+      "name": "a tie between horizontal and vertical counts as horizontal",
+      "from": { "x": 0, "y": 0, "w": 100, "h": 100 },
+      "to": { "x": 200, "y": 200, "w": 100, "h": 100 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "right",
+        "to": "left",
+        "points": [{ "x": 100, "y": 50 }, { "x": 150, "y": 50 }, { "x": 150, "y": 250 }, { "x": 200, "y": 250 }],
+        "label": { "x": 150, "y": 150 }
+      }
+    },
+    {
+      "name": "target to the left: leave from the left side",
+      "from": { "x": 300, "y": 0, "w": 100, "h": 50 },
+      "to": { "x": 0, "y": 0, "w": 100, "h": 50 },
+      "from_anchor": "auto",
+      "to_anchor": "auto",
+      "routing": "elbow",
+      "expect": {
+        "from": "left",
+        "to": "right",
+        "points": [{ "x": 300, "y": 25 }, { "x": 100, "y": 25 }],
+        "label": { "x": 200, "y": 25 }
+      }
+    }
+  ]
+}

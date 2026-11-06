@@ -1,16 +1,21 @@
 // State for the open board.
 //
-// Each item has its own signal, so editing one card re-renders that card only.
-// Content saves go through a per-item queue (spec section 10.4): saves are
-// debounced, only one is in flight at a time, and each uses the version the
-// previous one returned, so a tab never conflicts with itself.
+// - Each item and connector has its own signal, so a change re-renders only
+//   what changed.
+// - Structural changes (create, move, delete, connect) go through batches:
+//   one request, one transaction, and the server reports side effects (frame
+//   members moving, membership changing) so the UI never re-implements them.
+// - Text and style edits go through a per-item save queue (spec 10.4):
+//   debounced, one save in flight, each using the version the last returned.
+// - Every user action records how to undo and redo it (spec 10.4).
 
-import { batch, signal, type Signal } from "@preact/signals";
+import { batch, computed, signal, type Signal } from "@preact/signals";
 
-import { api, ApiError, type Geometry } from "./api";
-import type { Board, Item } from "./types";
+import { api, ApiError, type Op } from "./api";
+import type { Board, Connector, Item } from "./types";
 
 const SAVE_DELAY_MS = 600;
+const UNDO_LIMIT = 100;
 
 export interface Conflict {
   /** The item as it is on the server now. */
@@ -22,6 +27,8 @@ export interface Conflict {
 export interface ContentPatch {
   title?: string;
   content?: unknown;
+  /** `null` clears the style. */
+  style?: unknown;
 }
 
 export interface ItemState {
@@ -30,145 +37,446 @@ export interface ItemState {
   saving: Signal<boolean>;
 }
 
+export type Tool = "select" | "hand" | "rect" | "diamond" | "ellipse" | "sticky" | "text" | "frame" | "connector";
+
 export const board = signal<Board | null>(null);
+/** Non-frame items, bottom to top. */
 export const itemIds = signal<string[]>([]);
+/** Frames, bottom to top. Drawn beneath everything else. */
+export const frameIds = signal<string[]>([]);
 export const items = new Map<string, ItemState>();
-export const selectedId = signal<string | null>(null);
+export const connectorIds = signal<string[]>([]);
+export const connectors = new Map<string, Signal<Connector>>();
+
+export const selection = signal<ReadonlySet<string>>(new Set());
+export const selectedConnector = signal<string | null>(null);
+export const editingId = signal<string | null>(null);
+export const tool = signal<Tool>("select");
 export const status = signal<{ kind: "info" | "error"; text: string } | null>(null);
+
+export const selectedItems = computed(() =>
+  [...selection.value].map((id) => items.get(id)?.item.value).filter((i): i is Item => !!i),
+);
 
 export function report(err: unknown, action: string): void {
   const message = err instanceof ApiError ? err.body.message : String(err);
   status.value = { kind: "error", text: `Couldn't ${action}: ${message}` };
 }
 
-// ---------- Loading ----------
+export function select(ids: Iterable<string>): void {
+  batch(() => {
+    selection.value = new Set(ids);
+    selectedConnector.value = null;
+  });
+}
 
-export function load(b: Board, list: Item[]): void {
+export function item(id: string): Item | undefined {
+  return items.get(id)?.item.value;
+}
+
+/** A frame's members, as the UI currently knows them. */
+export function membersOf(frameId: string): Item[] {
+  return [...items.values()].map((s) => s.item.value).filter((i) => i.frame_id === frameId);
+}
+
+// ---------- Loading and applying server state ----------
+
+export function load(b: Board, list: Item[], conns: Connector[]): void {
   batch(() => {
     for (const q of queues.values()) q.cancel();
     queues.clear();
     items.clear();
-    for (const item of list) items.set(item.id, makeState(item));
+    connectors.clear();
+    for (const i of list) items.set(i.id, makeState(i));
+    for (const c of conns) connectors.set(c.id, signal(c));
     board.value = b;
-    itemIds.value = sortByZ(list).map((i) => i.id);
-    selectedId.value = null;
+    resort();
+    connectorIds.value = conns.map((c) => c.id);
+    selection.value = new Set();
+    selectedConnector.value = null;
+    editingId.value = null;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    canUndo.value = false;
+    canRedo.value = false;
   });
 }
 
-function makeState(item: Item): ItemState {
-  return { item: signal(item), conflict: signal(null), saving: signal(false) };
-}
-
-function sortByZ(list: Item[]): Item[] {
-  return [...list].sort((a, b) => a.z - b.z || a.id.localeCompare(b.id));
+function makeState(i: Item): ItemState {
+  return { item: signal(i), conflict: signal(null), saving: signal(false) };
 }
 
 function resort(): void {
   const list = [...items.values()].map((s) => s.item.value);
-  itemIds.value = sortByZ(list).map((i) => i.id);
+  const byZ = (a: Item, b: Item) => a.z - b.z || a.id.localeCompare(b.id);
+  frameIds.value = list.filter((i) => i.kind === "frame").sort(byZ).map((i) => i.id);
+  itemIds.value = list.filter((i) => i.kind !== "frame").sort(byZ).map((i) => i.id);
 }
 
-export function topZ(): number {
-  let top = 0;
-  for (const s of items.values()) top = Math.max(top, s.item.value.z);
-  return top;
-}
-
-// ---------- Create and delete ----------
-
-export async function createCard(
-  cardType: "note" | "checklist",
-  x: number,
-  y: number,
-): Promise<void> {
-  const b = board.value;
-  if (!b) return;
-  const content = cardType === "note" ? { markdown: "" } : { items: [{ text: "", done: false }] };
-  const title = cardType === "note" ? "Note" : "Checklist";
-  try {
-    const item = await api.createItem(b.id, {
-      kind: "card",
-      card_type: cardType,
-      title,
-      content,
-      x: Math.round(x),
-      y: Math.round(y),
-    });
-    batch(() => {
-      items.set(item.id, makeState(item));
-      resort();
-      selectedId.value = item.id;
-    });
-  } catch (err) {
-    report(err, "add the card");
+/** Insert or update items from the server. Unsaved local text is kept. */
+function upsertItems(list: Item[]): void {
+  for (const incoming of list) {
+    const state = items.get(incoming.id);
+    if (!state) {
+      items.set(incoming.id, makeState(incoming));
+      continue;
+    }
+    const queue = queues.get(incoming.id);
+    if (queue?.busy()) {
+      // A content save is pending or in flight: take geometry and membership
+      // from the server, keep the local text, version and style.
+      const local = state.item.value;
+      state.item.value = {
+        ...local,
+        x: incoming.x,
+        y: incoming.y,
+        w: incoming.w,
+        h: incoming.h,
+        z: incoming.z,
+        locked: incoming.locked,
+        frame_id: incoming.frame_id,
+      };
+    } else {
+      state.item.value = incoming;
+    }
   }
 }
 
-export async function deleteItem(id: string): Promise<void> {
-  const state = items.get(id);
-  if (!state) return;
-  queues.get(id)?.cancel();
-  queues.delete(id);
-  batch(() => {
+function removeItems(ids: string[]): void {
+  for (const id of ids) {
+    queues.get(id)?.cancel();
+    queues.delete(id);
     items.delete(id);
+  }
+  const gone = new Set(ids);
+  if ([...selection.value].some((id) => gone.has(id))) {
+    selection.value = new Set([...selection.value].filter((id) => !gone.has(id)));
+  }
+  if (editingId.value && gone.has(editingId.value)) editingId.value = null;
+}
+
+function upsertConnector(c: Connector): void {
+  const existing = connectors.get(c.id);
+  if (existing) existing.value = c;
+  else {
+    connectors.set(c.id, signal(c));
+    connectorIds.value = [...connectorIds.value, c.id];
+  }
+}
+
+function removeConnector(id: string): void {
+  connectors.delete(id);
+  connectorIds.value = connectorIds.value.filter((c) => c !== id);
+  if (selectedConnector.value === id) selectedConnector.value = null;
+}
+
+function isItem(v: unknown): v is Item {
+  return !!v && typeof v === "object" && "kind" in v && "board_id" in v;
+}
+
+function isConnector(v: unknown): v is Connector {
+  return !!v && typeof v === "object" && "from_item" in v;
+}
+
+/** Run a batch and apply everything it returns. Returns the refs map. */
+export async function runOps(ops: Op[]): Promise<Record<string, string>> {
+  const b = board.value;
+  if (!b || ops.length === 0) return {};
+  const result = await api.batch(b.id, ops);
+  batch(() => {
+    const upserts: Item[] = [];
+    for (const r of result.results) {
+      if (isItem(r)) upserts.push(r);
+      else if (isConnector(r)) upsertConnector(r);
+      else if (r && typeof r === "object" && "deleted" in r) {
+        removeItems((r as { deleted: string[] }).deleted);
+      } else if (r && typeof r === "object" && "deleted_connector" in r) {
+        removeConnector((r as { deleted_connector: string }).deleted_connector);
+      }
+    }
+    upsertItems([...upserts, ...result.affected]);
     resort();
-    if (selectedId.value === id) selectedId.value = null;
+  });
+  return result.refs;
+}
+
+// ---------- Undo and redo ----------
+
+/** One step of an undo entry: batch ops, or a text/style edit through the save queue. */
+type Step = { ops: Op[] } | { edit: { id: string; patch: ContentPatch } };
+
+interface Entry {
+  undo: Step[];
+  redo: Step[];
+}
+
+const undoStack: Entry[] = [];
+const redoStack: Entry[] = [];
+export const canUndo = signal(false);
+export const canRedo = signal(false);
+
+function remember(entry: Entry): void {
+  undoStack.push(entry);
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+  canUndo.value = true;
+  canRedo.value = false;
+}
+
+async function runSteps(steps: Step[]): Promise<void> {
+  for (const step of steps) {
+    if ("ops" in step) await runOps(step.ops);
+    else editContent(step.edit.id, step.edit.patch, true);
+  }
+}
+
+export async function undo(): Promise<void> {
+  const entry = undoStack.pop();
+  canUndo.value = undoStack.length > 0;
+  if (!entry) return;
+  try {
+    await runSteps(entry.undo);
+    redoStack.push(entry);
+    canRedo.value = true;
+  } catch (err) {
+    report(err, "undo");
+  }
+}
+
+export async function redo(): Promise<void> {
+  const entry = redoStack.pop();
+  canRedo.value = redoStack.length > 0;
+  if (!entry) return;
+  try {
+    await runSteps(entry.redo);
+    undoStack.push(entry);
+    canUndo.value = true;
+  } catch (err) {
+    report(err, "redo");
+  }
+}
+
+// ---------- User actions ----------
+
+export interface NewItem {
+  /** Local name, so connectors in the same call can refer to it. */
+  ref?: string;
+  kind: Item["kind"];
+  card_type?: string;
+  title?: string;
+  content: unknown;
+  style?: unknown;
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+}
+
+export interface NewConnector {
+  from: string;
+  to: string;
+  from_anchor?: string;
+  to_anchor?: string;
+  label?: string | null;
+  style?: unknown;
+}
+
+/** Create items (and connectors between them or existing items). Returns the new item ids, in order. */
+export async function create(newItems: NewItem[], newConnectors: NewConnector[] = []): Promise<string[]> {
+  const ops: Op[] = newItems.map((n, i) => {
+    const { ref, ...rest } = n;
+    return { op: "create_item", ref: ref ?? `item${i}`, ...rest, x: Math.round(n.x), y: Math.round(n.y) };
+  });
+  newConnectors.forEach((c, i) => ops.push({ op: "create_connector", ref: `conn${i}`, ...c }));
+  try {
+    const refs = await runOps(ops);
+    const itemIdsCreated = newItems.map((n, i) => refs[n.ref ?? `item${i}`] as string);
+    const connectorIdsCreated = newConnectors.map((_, i) => refs[`conn${i}`] as string);
+    remember({
+      undo: [
+        {
+          ops: [
+            ...connectorIdsCreated.map((id) => ({ op: "delete_connector", connector: id })),
+            ...itemIdsCreated.map((id) => ({ op: "delete_item", item: id })),
+          ],
+        },
+      ],
+      redo: [
+        {
+          ops: [
+            ...itemIdsCreated.map((id) => ({ op: "undelete_item", item: id })),
+            ...connectorIdsCreated.map((id) => ({ op: "undelete_connector", connector: id })),
+          ],
+        },
+      ],
+    });
+    return itemIdsCreated;
+  } catch (err) {
+    report(err, "add that");
+    return [];
+  }
+}
+
+export interface Placement {
+  id: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  z?: number;
+  locked?: boolean;
+}
+
+/** Move, resize, restack or lock items, as one undoable step. */
+export async function place(changes: Placement[]): Promise<void> {
+  if (changes.length === 0) return;
+  const before: Placement[] = changes.map((c) => {
+    const i = item(c.id);
+    const prev: Placement = { id: c.id };
+    if (!i) return prev;
+    if (c.x !== undefined) prev.x = i.x;
+    if (c.y !== undefined) prev.y = i.y;
+    if (c.w !== undefined) prev.w = i.w;
+    if (c.h !== undefined) prev.h = i.h;
+    if (c.z !== undefined) prev.z = i.z;
+    if (c.locked !== undefined) prev.locked = i.locked;
+    return prev;
+  });
+  const ops = (list: Placement[]) => list.map(({ id, ...g }) => ({ op: "set_geometry", item: id, ...g }));
+
+  // Show the result straight away; the server's answer replaces it.
+  batch(() => {
+    for (const c of changes) {
+      const state = items.get(c.id);
+      if (!state) continue;
+      const { id: _id, ...g } = c;
+      state.item.value = { ...state.item.value, ...g };
+    }
+    resort();
   });
   try {
-    await api.deleteItem(id);
-    status.value = { kind: "info", text: `Moved “${state.item.value.title ?? "item"}” to the trash.` };
+    await runOps(ops(changes));
+    remember({ undo: [{ ops: ops(before) }], redo: [{ ops: ops(changes) }] });
   } catch (err) {
-    // Put it back so what's on screen matches the server.
     batch(() => {
-      items.set(id, state);
+      for (const b of before) {
+        const state = items.get(b.id);
+        if (!state) continue;
+        const { id: _id, ...g } = b;
+        state.item.value = { ...state.item.value, ...g };
+      }
       resort();
     });
-    report(err, "delete the card");
+    report(err, "move that");
   }
 }
 
-export async function undelete(id: string): Promise<void> {
+/** Delete items (and/or a connector) as one undoable step. */
+export async function remove(ids: string[], withContents = false, connectorId?: string | null): Promise<void> {
+  const ops: Op[] = ids.map((id) => ({ op: "delete_item", item: id, with_contents: withContents }));
+  if (connectorId) ops.unshift({ op: "delete_connector", connector: connectorId });
+  if (ops.length === 0) return;
+  // Everything that will go, for undo: the items, plus frame contents.
+  const gone = new Set(ids);
+  if (withContents) for (const id of ids) for (const m of membersOf(id)) gone.add(m.id);
+  // Don't let a pending text save land on an item that's about to be deleted.
+  for (const id of gone) queues.get(id)?.cancel();
   try {
-    const item = await api.undeleteItem(id);
-    batch(() => {
-      items.set(item.id, makeState(item));
-      resort();
-      selectedId.value = item.id;
-    });
+    await runOps(ops);
+    const restore: Op[] = [...gone].map((id) => ({ op: "undelete_item", item: id }));
+    if (connectorId) restore.push({ op: "undelete_connector", connector: connectorId });
+    remember({ undo: [{ ops: restore }], redo: [{ ops }] });
+    const n = gone.size + (connectorId ? 1 : 0);
+    status.value = { kind: "info", text: n === 1 ? "Moved to the trash." : `Moved ${n} things to the trash.` };
   } catch (err) {
-    report(err, "restore the card");
+    report(err, "delete that");
   }
 }
 
-// ---------- Geometry ----------
-
-/** Save a move or resize. Last write wins, so no version is needed. */
-export async function saveGeometry(id: string, g: Geometry): Promise<void> {
-  const state = items.get(id);
-  if (!state) return;
-  const before = state.item.value;
-  state.item.value = { ...before, ...g };
-  if (g.z !== undefined) resort();
+export async function restoreFromTrash(id: string): Promise<void> {
   try {
-    const saved = await api.setGeometry(id, g);
-    // Keep any content edits made meanwhile; take geometry from the server.
-    const now = state.item.value;
-    state.item.value = {
-      ...now,
-      x: saved.x,
-      y: saved.y,
-      w: saved.w,
-      h: saved.h,
-      z: saved.z,
-      locked: saved.locked,
-    };
+    await runOps([{ op: "undelete_item", item: id }]);
+    select([id]);
   } catch (err) {
-    state.item.value = { ...state.item.value, x: before.x, y: before.y, w: before.w, h: before.h };
-    report(err, "move the card");
+    report(err, "restore that");
   }
 }
 
-// ---------- Content ----------
+export async function restoreConnector(id: string): Promise<void> {
+  try {
+    await runOps([{ op: "undelete_connector", connector: id }]);
+  } catch (err) {
+    report(err, "restore that");
+  }
+}
+
+/** Change connectors' anchors, label or style, as one undoable step. */
+export async function updateConnector(id: string, patch: Partial<Connector>): Promise<void> {
+  const c = connectors.get(id)?.value;
+  if (!c) return;
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  for (const key of ["from_anchor", "to_anchor", "label", "style"] as const) {
+    if (key in patch) {
+      before[key] = c[key] ?? null;
+      after[key] = patch[key] ?? null;
+    }
+  }
+  connectors.get(id)!.value = { ...c, ...patch };
+  const op = (p: Record<string, unknown>) => [{ op: "update_connector", connector: id, ...p }];
+  try {
+    await runOps(op(after));
+    remember({ undo: [{ ops: op(before) }], redo: [{ ops: op(after) }] });
+  } catch (err) {
+    connectors.get(id)!.value = c;
+    report(err, "change the connector");
+  }
+}
+
+/**
+ * Record a text or style change for undo. Call when an edit session ends,
+ * with the values from when it started.
+ */
+export function rememberEdit(id: string, before: ContentPatch, after: ContentPatch): void {
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  remember({ undo: [{ edit: { id, patch: before } }], redo: [{ edit: { id, patch: after } }] });
+}
+
+/** Change items' style (merged into each item's existing style), as one undoable step. */
+export function restyle(ids: string[], patch: Record<string, unknown>): void {
+  const undo: Step[] = [];
+  const redo: Step[] = [];
+  for (const id of ids) {
+    const i = item(id);
+    if (!i) continue;
+    const before = i.style ?? null;
+    const merged: Record<string, unknown> = { ...(i.style ?? {}), ...patch };
+    for (const k of Object.keys(merged)) if (merged[k] === undefined || merged[k] === null) delete merged[k];
+    const after = Object.keys(merged).length ? merged : null;
+    editContent(id, { style: after }, true);
+    undo.push({ edit: { id, patch: { style: before } } });
+    redo.push({ edit: { id, patch: { style: after } } });
+  }
+  if (undo.length) remember({ undo, redo });
+}
+
+/** Change items' content fields (merged), e.g. a shape's type, as one undoable step. */
+export function reshape(ids: string[], patch: Record<string, unknown>): void {
+  const undo: Step[] = [];
+  const redo: Step[] = [];
+  for (const id of ids) {
+    const i = item(id);
+    if (!i) continue;
+    const before = i.content;
+    const after = { ...(i.content as object), ...patch };
+    editContent(id, { content: after }, true);
+    undo.push({ edit: { id, patch: { content: before } } });
+    redo.push({ edit: { id, patch: { content: after } } });
+  }
+  if (undo.length) remember({ undo, redo });
+}
+
+// ---------- Content saves ----------
 
 class SaveQueue {
   private pending: ContentPatch | null = null;
@@ -177,9 +485,13 @@ class SaveQueue {
 
   constructor(private readonly id: string) {}
 
+  busy(): boolean {
+    return this.inFlight || this.pending !== null;
+  }
+
   /** Queue a change. Later changes to the same field replace earlier ones. */
   push(patch: ContentPatch, immediate: boolean): void {
-    this.pending = { ...this.pending, ...patch };
+    this.pending = { ...(this.pending ?? {}), ...patch };
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.flush(), immediate ? 0 : SAVE_DELAY_MS);
   }
@@ -200,10 +512,16 @@ class SaveQueue {
     state.saving.value = true;
     try {
       const saved = await api.updateItem(this.id, { version: state.item.value.version, ...patch });
-      // The server's copy, plus any edits typed while this save was in flight.
-      state.item.value = this.pending ? applyLocal(saved, this.pending) : saved;
+      // The server's copy, plus any edits made while this save was in flight.
+      const current = state.item.value;
+      const merged = this.pending ? applyLocal(saved, this.pending) : saved;
+      // Geometry may have changed locally meanwhile (a drag); keep it.
+      state.item.value = { ...merged, x: current.x, y: current.y, w: current.w, h: current.h, z: current.z };
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && err.body.current) {
+      if (err instanceof ApiError && err.status === 404) {
+        // Deleted (here or elsewhere) while the save was on its way: nothing to save.
+        this.pending = null;
+      } else if (err instanceof ApiError && err.status === 409 && err.body.current) {
         state.conflict.value = {
           theirs: err.body.current as Item,
           mine: { ...patch, ...(this.pending ?? {}) },
@@ -222,17 +540,18 @@ class SaveQueue {
   }
 }
 
-function applyLocal(item: Item, patch: ContentPatch): Item {
+function applyLocal(i: Item, patch: ContentPatch): Item {
   return {
-    ...item,
+    ...i,
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.content !== undefined ? { content: patch.content as Item["content"] } : {}),
+    ...(patch.style !== undefined ? { style: patch.style as Item["style"] } : {}),
   };
 }
 
 const queues = new Map<string, SaveQueue>();
 
-/** Change an item's title or content locally and save it (debounced). */
+/** Change an item's title, content or style locally and save it (debounced). */
 export function editContent(id: string, patch: ContentPatch, immediate = false): void {
   const state = items.get(id);
   if (!state) return;
@@ -266,4 +585,16 @@ export function keepMine(id: string): void {
     state.conflict.value = null;
   });
   editContent(id, conflict.mine, true);
+}
+
+export function topZ(): number {
+  let top = 0;
+  for (const s of items.values()) top = Math.max(top, s.item.value.z);
+  return top;
+}
+
+export function bottomZ(): number {
+  let bottom = 0;
+  for (const s of items.values()) bottom = Math.min(bottom, s.item.value.z);
+  return bottom;
 }

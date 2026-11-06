@@ -48,7 +48,7 @@ check("new board opens on an empty mat with a hint", true);
 // Add a note by double-clicking the mat.
 const mat = page.locator(".mat");
 await mat.dblclick({ position: { x: 300, y: 250 } });
-await page.getByRole("menuitem", { name: "Note" }).click();
+await page.getByRole("menuitem", { name: "Note", exact: true }).click();
 const note = page.locator(".card").filter({ has: page.locator(".note-view, .note-editor") });
 await note.waitFor();
 await note.locator(".note-view").dblclick();
@@ -72,7 +72,7 @@ check("card title saved", full.items.find((i) => i.id === noteItem.id)?.title ==
 
 // Add a checklist and fill it in.
 await mat.dblclick({ position: { x: 800, y: 300 } });
-await page.getByRole("menuitem", { name: "Checklist" }).click();
+await page.getByRole("menuitem", { name: "Checklist", exact: true }).click();
 const list = page.locator(".card").filter({ has: page.locator(".checklist") });
 await list.waitFor();
 await list.locator(".checklist-text").first().fill("Register domain");
@@ -95,10 +95,13 @@ check("checklist shows the count", (await list.locator(".checklist-count").inner
 const before = full.items.find((i) => i.id === noteItem.id);
 const header = note.locator(".card-header");
 const hb = await header.boundingBox();
+// Hold Alt: drags snap to a 10-unit grid otherwise.
+await page.keyboard.down("Alt");
 await page.mouse.move(hb.x + 40, hb.y + 10);
 await page.mouse.down();
 await page.mouse.move(hb.x + 140, hb.y + 70, { steps: 8 });
 await page.mouse.up();
+await page.keyboard.up("Alt");
 await page.waitForTimeout(600);
 full = await apiGet(`/boards/${boardId}`);
 const moved = full.items.find((i) => i.id === noteItem.id);

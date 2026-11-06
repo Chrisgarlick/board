@@ -1,17 +1,24 @@
 //! Batches: several operations in one transaction (spec section 6, "Batch").
 //!
-//! A `create_item` can carry a `ref`; later operations can use that ref
-//! wherever they take an item id. If any operation fails, nothing is applied
-//! and the error says which operation it was.
+//! A `create_item` or `create_connector` can carry a `ref`; later operations
+//! can use that ref wherever they take an item or connector id. If any
+//! operation fails, nothing is applied and the error says which operation it
+//! was.
+//!
+//! Besides one result per operation, the response lists `affected` items:
+//! items the operations changed as a side effect (a frame's members moving
+//! with it, frame membership changing), in their final state. The UI applies
+//! those so it never has to repeat the server's rules.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::SqliteConnection;
 
 use crate::error::{AppError, AppResult};
-use crate::service::items::{self, Geometry, ItemPatch, NewItem};
+use crate::service::connectors::{self, Anchor, ConnectorPatch, NewConnector};
+use crate::service::items::{self, Geometry, Item, ItemPatch, NewItem};
 use crate::types::Ctx;
 
 pub const MAX_OPS: usize = 500;
@@ -75,9 +82,46 @@ pub enum Op {
     },
     DeleteItem {
         item: String,
+        #[serde(default)]
+        with_contents: bool,
     },
     UndeleteItem {
         item: String,
+    },
+    CreateConnector {
+        #[serde(default, rename = "ref")]
+        reference: Option<String>,
+        from: String,
+        to: String,
+        #[serde(default)]
+        from_anchor: Option<Anchor>,
+        #[serde(default)]
+        to_anchor: Option<Anchor>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        style: Option<Value>,
+    },
+    UpdateConnector {
+        connector: String,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        to: Option<String>,
+        #[serde(default)]
+        from_anchor: Option<Anchor>,
+        #[serde(default)]
+        to_anchor: Option<Anchor>,
+        #[serde(default, deserialize_with = "present_string")]
+        label: Option<Option<String>>,
+        #[serde(default, deserialize_with = "present")]
+        style: Option<Option<Value>>,
+    },
+    DeleteConnector {
+        connector: String,
+    },
+    UndeleteConnector {
+        connector: String,
     },
 }
 
@@ -85,12 +129,27 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<Value
     Option::<Value>::deserialize(d).map(Some)
 }
 
+fn present_string<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(d).map(Some)
+}
+
 #[derive(Debug, Serialize)]
 pub struct BatchResult {
-    /// One entry per operation: the item afterwards, or `{ "deleted": id }`.
+    /// One entry per operation: the item or connector afterwards, or what a
+    /// delete removed.
     pub results: Vec<Value>,
-    /// New item ids, keyed by the `ref` given in `create_item`.
+    /// New ids, keyed by the `ref` given when creating.
     pub refs: HashMap<String, String>,
+    /// Items changed as a side effect, in their final state.
+    pub affected: Vec<Item>,
+}
+
+/// Refs created so far, and items changed as side effects.
+struct State {
+    refs: HashMap<String, String>,
+    affected: BTreeSet<String>,
 }
 
 pub async fn apply(
@@ -107,11 +166,13 @@ pub async fn apply(
     }
     crate::service::boards::require_exists(conn, board_id).await?;
 
-    let mut refs: HashMap<String, String> = HashMap::new();
+    let mut state = State {
+        refs: HashMap::new(),
+        affected: BTreeSet::new(),
+    };
     let mut results = Vec::with_capacity(batch.ops.len());
-
     for (index, op) in batch.ops.into_iter().enumerate() {
-        let result = apply_one(conn, ctx, board_id, op, &mut refs)
+        let result = apply_one(conn, ctx, board_id, op, &mut state)
             .await
             .map_err(|source| AppError::InBatch {
                 index,
@@ -119,7 +180,19 @@ pub async fn apply(
             })?;
         results.push(result);
     }
-    Ok(BatchResult { results, refs })
+
+    // Final state of side-effected items that are still live.
+    let mut affected = Vec::new();
+    for id in &state.affected {
+        if let Ok(item) = items::get(conn, id).await {
+            affected.push(item);
+        }
+    }
+    Ok(BatchResult {
+        results,
+        refs: state.refs,
+        affected,
+    })
 }
 
 async fn apply_one(
@@ -127,7 +200,7 @@ async fn apply_one(
     ctx: Ctx,
     board_id: &str,
     op: Op,
-    refs: &mut HashMap<String, String>,
+    state: &mut State,
 ) -> AppResult<Value> {
     match op {
         Op::CreateItem {
@@ -144,7 +217,7 @@ async fn apply_one(
             z,
         } => {
             if let Some(r) = &reference {
-                check_ref(r, refs)?;
+                check_ref(r, &state.refs)?;
             }
             let new = NewItem {
                 kind,
@@ -158,10 +231,11 @@ async fn apply_one(
                 h,
                 z,
             };
-            let created = items::create(conn, ctx, board_id, new).await?;
+            let (created, affected) = items::create(conn, ctx, board_id, new).await?;
             if let Some(r) = reference {
-                refs.insert(r, created.id.clone());
+                state.refs.insert(r, created.id.clone());
             }
+            state.affected.extend(affected);
             Ok(json!(created))
         }
         Op::UpdateItem {
@@ -171,20 +245,14 @@ async fn apply_one(
             content,
             style,
         } => {
-            let id = resolve(conn, board_id, &item, refs).await?;
-            let updated = items::update(
-                conn,
-                ctx,
-                &id,
-                ItemPatch {
-                    version,
-                    title,
-                    content,
-                    style,
-                },
-            )
-            .await?;
-            Ok(json!(updated))
+            let id = resolve_item(conn, board_id, &item, &state.refs).await?;
+            let patch = ItemPatch {
+                version,
+                title,
+                content,
+                style,
+            };
+            Ok(json!(items::update(conn, ctx, &id, patch).await?))
         }
         Op::SetGeometry {
             item,
@@ -195,31 +263,102 @@ async fn apply_one(
             z,
             locked,
         } => {
-            let id = resolve(conn, board_id, &item, refs).await?;
-            let moved = items::set_geometry(
-                conn,
-                ctx,
-                &id,
-                Geometry {
-                    x,
-                    y,
-                    w,
-                    h,
-                    z,
-                    locked,
-                },
-            )
-            .await?;
+            let id = resolve_item(conn, board_id, &item, &state.refs).await?;
+            let g = Geometry {
+                x,
+                y,
+                w,
+                h,
+                z,
+                locked,
+            };
+            let (moved, affected) = items::set_geometry(conn, ctx, &id, g).await?;
+            state.affected.extend(affected);
             Ok(json!(moved))
         }
-        Op::DeleteItem { item } => {
-            let id = resolve(conn, board_id, &item, refs).await?;
-            items::delete(conn, ctx, &id).await?;
-            Ok(json!({ "deleted": id }))
+        Op::DeleteItem {
+            item,
+            with_contents,
+        } => {
+            let id = resolve_item(conn, board_id, &item, &state.refs).await?;
+            let deleted = items::delete(conn, ctx, &id, with_contents).await?;
+            state.affected.extend(deleted.affected.iter().cloned());
+            Ok(json!(deleted))
         }
         Op::UndeleteItem { item } => {
-            let id = resolve(conn, board_id, &item, refs).await?;
-            Ok(json!(items::undelete(conn, ctx, &id).await?))
+            let id = resolve_item(conn, board_id, &item, &state.refs).await?;
+            let (restored, affected) = items::undelete(conn, ctx, &id).await?;
+            state.affected.extend(affected);
+            Ok(json!(restored))
+        }
+        Op::CreateConnector {
+            reference,
+            from,
+            to,
+            from_anchor,
+            to_anchor,
+            label,
+            style,
+        } => {
+            if let Some(r) = &reference {
+                check_ref(r, &state.refs)?;
+            }
+            let from = resolve_item(conn, board_id, &from, &state.refs)
+                .await
+                .map_err(|_| AppError::invalid("from", "no such item on this board"))?;
+            let to = resolve_item(conn, board_id, &to, &state.refs)
+                .await
+                .map_err(|_| AppError::invalid("to", "no such item on this board"))?;
+            let new = NewConnector {
+                from,
+                to,
+                from_anchor,
+                to_anchor,
+                label,
+                style,
+            };
+            let created = connectors::create(conn, ctx, board_id, new).await?;
+            if let Some(r) = reference {
+                state.refs.insert(r, created.id.clone());
+            }
+            Ok(json!(created))
+        }
+        Op::UpdateConnector {
+            connector,
+            from,
+            to,
+            from_anchor,
+            to_anchor,
+            label,
+            style,
+        } => {
+            let id = resolve_connector(conn, board_id, &connector, &state.refs).await?;
+            let from = match from {
+                Some(f) => Some(resolve_item(conn, board_id, &f, &state.refs).await?),
+                None => None,
+            };
+            let to = match to {
+                Some(t) => Some(resolve_item(conn, board_id, &t, &state.refs).await?),
+                None => None,
+            };
+            let patch = ConnectorPatch {
+                from,
+                to,
+                from_anchor,
+                to_anchor,
+                label,
+                style,
+            };
+            Ok(json!(connectors::update(conn, ctx, &id, patch).await?))
+        }
+        Op::DeleteConnector { connector } => {
+            let id = resolve_connector(conn, board_id, &connector, &state.refs).await?;
+            connectors::delete(conn, ctx, &id).await?;
+            Ok(json!({ "deleted_connector": id }))
+        }
+        Op::UndeleteConnector { connector } => {
+            let id = resolve_connector(conn, board_id, &connector, &state.refs).await?;
+            Ok(json!(connectors::undelete(conn, ctx, &id).await?))
         }
     }
 }
@@ -243,7 +382,7 @@ fn check_ref(r: &str, refs: &HashMap<String, String>) -> AppResult<()> {
 
 /// A ref from earlier in this batch, or an item id. Either way the item must
 /// be on this batch's board.
-async fn resolve(
+async fn resolve_item(
     conn: &mut SqliteConnection,
     board_id: &str,
     item: &str,
@@ -252,6 +391,22 @@ async fn resolve(
     let id = refs.get(item).cloned().unwrap_or_else(|| item.to_string());
     if items::board_of(conn, &id).await? != board_id {
         return Err(AppError::NotFound("item"));
+    }
+    Ok(id)
+}
+
+async fn resolve_connector(
+    conn: &mut SqliteConnection,
+    board_id: &str,
+    connector: &str,
+    refs: &HashMap<String, String>,
+) -> AppResult<String> {
+    let id = refs
+        .get(connector)
+        .cloned()
+        .unwrap_or_else(|| connector.to_string());
+    if connectors::board_of(conn, &id).await? != board_id {
+        return Err(AppError::NotFound("connector"));
     }
     Ok(id)
 }

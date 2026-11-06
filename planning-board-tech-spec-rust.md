@@ -590,7 +590,7 @@ Cap content at 512 KB per item and per table definition. Cap a board at 5,000 li
 | PATCH | `/api/items/{id}` | Update title/content/style. Requires `version`; 409 with current item on mismatch |
 | PATCH | `/api/items/{id}/geometry` | x, y, w, h, z, locked (no version check, last write wins). On a frame, moves its members too |
 | POST | `/api/items/move` | Move items to another board: `{ item_ids, board_id, dx?, dy? }` (rules below) |
-| DELETE | `/api/items/{id}` | Soft delete (to trash). Frames: `?with_contents=1` deletes members too |
+| DELETE | `/api/items/{id}` | Soft delete (to trash). Frames: `?with_contents=true` deletes members too. Returns `{ deleted, affected }`: what went to the trash, and items whose frame membership changed |
 | POST | `/api/items/{id}/undelete` | Restore from trash |
 | PUT | `/api/items/{id}/svg` | Store rendered SVG for a diagram card: `{ svg, for_version }`; 409 if `for_version` isn't current |
 | GET | `/api/items/{id}/revisions` | List revisions |
@@ -609,6 +609,8 @@ Cap content at 512 KB per item and per table definition. Cap a board at 5,000 li
 ### Batch
 
 `POST /api/boards/{id}/batch` takes `{ "ops": [ … ] }` and applies them in one transaction. Ops: `create_item`, `update_item` (with `version`), `set_geometry`, `delete_item`, `undelete_item`, `create_connector`, `update_connector`, `delete_connector`. A `create_item` can carry a `ref`, and later ops in the same batch can use that `ref` anywhere an item id is expected, so "create three shapes and connect them" is one request.
+
+The response has one result per op, the `refs` map (ref → new id), and `affected`: items the ops changed as a side effect (a frame's members moving with it, frame membership changing), in their final state. Clients apply `affected` rather than re-implementing the server's rules. Connector ops (`create_connector`, `update_connector`, `delete_connector`, `undelete_connector`) take refs too, so a whole flow can be created in one batch.
 
 The UI uses batches for multi-select moves, paste, duplicate, align and group undo. MCP's `add_items` is a batch.
 
@@ -980,6 +982,7 @@ Both apps are infinite canvases, so keep the line sharp: **Board holds boxes and
 
 - **Quick flow:** a selected shape shows four `+` handles. Dragging from one draws a connector; dropping on empty space creates a new shape of the same type there, already connected, with the text editor open. Clicking a handle does the same at the default spacing. `Tab` on a selected shape creates and connects the next one below it. This is what makes drawing a flowchart fast.
 - **Editing:** double-click (or `Enter`) to edit an item's text or a connector's label; `Esc` to finish.
+- **Deleting:** `Delete` sends the selection to the trash; on a frame it releases the contents, and `Shift+Delete` takes the contents too.
 - **Connectors:** hovering an item shows its four anchors; dropping on an anchor pins it, dropping on the item body uses `auto`. Connectors re-route live as items move.
 - **Arrange:** snap to a 10-unit grid (hold `Alt` to disable), alignment guides against nearby items, align and distribute for a multi-selection, bring forward/back (`]` / `[`), lock (`Cmd+L`).
 - **Clipboard:** copy, cut, paste and duplicate (`Cmd+D`) for any selection, including the connectors between selected items. Pasting between boards works for kinds that can move (section 6).
@@ -1102,7 +1105,7 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 6. Fonts: exports use Inter by default. Should client PDFs use a brand font per board (configured on the board, loaded from a font file)? It's a small addition to the renderer, but every export path would need to honour it.
 7. One schema per board assumes one board per job. If you want several independent schemas on one board (for example, comparing two designs of the same data), tables would gain a `schema_id` and schema cards would belong to one schema. Easy now, harder after M5, so decide before then.
 8. What is Design built in? If Rust, it uses the `board-model` crate; otherwise it generates types from the JSON Schema.
-9. Is the flowchart shape set right, and are single-level frames enough? Nested frames (a "Phase 1" frame holding several flows) are a contained addition later, but they change membership rules, so better decided before M2.
+9. ~~Shape set and nested frames?~~ **Decided:** the shape set as specced, and no nested frames in v1. Adding nesting later means one migration (rebuild `items` without the `frame_id` CHECK, since SQLite can't drop a constraint in place) and changing membership to the innermost containing frame.
 
 ---
 

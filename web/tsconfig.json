@@ -16,7 +16,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
+    "allowImportingTsExtensions": true
   },
   "include": [
     "src"

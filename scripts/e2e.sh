@@ -31,7 +31,12 @@ for _ in $(seq 1 50); do
   curl -s "localhost:$PORT/healthz" >/dev/null && break
   sleep 0.2
 done
-LINK=$("$BIN" "${CONFIG[@]}" login 2>/dev/null)
-
 mkdir -p e2e/screenshots
-node e2e/run.mjs "$LINK" "$TOKEN"
+status=0
+for test in e2e/*.mjs; do
+  echo "== $test"
+  # Each test logs in with its own one-time link.
+  LINK=$("$BIN" "${CONFIG[@]}" login 2>/dev/null)
+  node "$test" "$LINK" "$TOKEN" || status=1
+done
+exit $status

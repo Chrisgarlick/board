@@ -13,6 +13,9 @@ step "Frontend: install"
 step "Frontend: typecheck"
 (cd web && npm run -s typecheck)
 
+step "Frontend: test"
+(cd web && npm test --silent)
+
 step "Frontend: build"
 (cd web && npm run -s build)
 
