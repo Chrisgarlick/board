@@ -15,7 +15,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 | ~~Shape set, nested frames~~ | Phase 2 | §15 Q9 | **Decided:** shape set as specced; no nesting in v1, can be added later |
 | ~~Which MCP clients~~ | Phase 3 | §15 Q5 | **Decided:** Claude Code only for now, with a static bearer token; OAuth for claude.ai / Desktop can be added later |
 | ~~Export font~~ | Phase 4 | §15 Q6 | **Decided:** Inter for every export in v1; brand fonts per board can come later |
-| One schema per board, or several | Phase 5 | §15 Q7 | Recommendation: one, as specced |
+| ~~One schema per board, or several~~ | Phase 5 | §15 Q7 | **Decided:** one per board, as specced; build on it after real use |
 | What Design is written in | Phase 6 | §15 Q8 | Rust → `board-model` crate; otherwise JSON Schema |
 | Typeset's actual input format | Phase 7 | §15 Q1 | **Blocks phase 7.** Send a real payload |
 | How Typeset reaches Board (same droplet, network, auth) | Phase 7 | §15 Q2 | |
@@ -205,25 +205,39 @@ Files and instructions are ready in `deploy/` (`deploy/README.md` walks through 
 
 ### Backend
 
-- [ ] `board-model` crate: `SchemaTable`, `SchemaColumn` with the logical `ColumnType` enum and extras, `SchemaIndex`, `SitemapNode`, derive `schemars::JsonSchema` (§5.4, §14).
-- [ ] Tables service: create/update (versioned)/delete (refuse if referenced unless `force`)/undelete; table revisions; `schema_version` bump in the same transaction (§4.2, §5.4).
-- [ ] Ids: `tbl_`/`col_`/`pg_`; server assigns; **keep the id when a column (or page) without an id matches by name (or slug)**.
-- [ ] Input by name: resolve `{ table, column }`, table names, page slugs to ids on write; return ids and names on read.
-- [ ] Semantic validation (§5.5): identifier names, uniqueness, type extras, defaults, references, indexes; warnings array.
-- [ ] Schema card content (`table_ids`), sitemap card content (node ids), shape `page_id`.
-- [ ] `GET /api/items/{id}/er` (Mermaid source for the UI) and ER rendering in `render/` (layered by foreign key, crow's-foot ends, stubs for tables outside the view), so `render.svg`/`render.png` work on schema cards.
-- [ ] `table.*` SSE events with `schema_version`.
-- [ ] MCP: `get_schema`, `add_table`, `update_table`, `delete_table`; tool descriptions list the logical types.
-- [ ] `update_board` with `stack`.
-- [ ] Tests: id kept on rename-by-name, FK resolution across cards, refusing to delete a referenced table, `force` removing references, cardinality in the ER output, every validation rule.
+- [x] `board-model` crate: `SchemaTable`, `SchemaColumn` with the logical `ColumnType` enum and extras, `SchemaIndex`, `SitemapNode`, derive `schemars::JsonSchema` (§5.4, §14).
+- [x] Tables service: create/update (versioned)/delete (refuse if referenced unless `force`)/undelete; table revisions; `schema_version` bump in the same transaction (§4.2, §5.4).
+- [x] Ids: `tbl_`/`col_`/`pg_`; server assigns; **keep the id when a column (or page) without an id matches by name (or slug)**.
+- [x] Input by name: resolve `{ table, column }`, table names, page slugs to ids on write; return ids and names on read.
+- [x] Semantic validation (§5.5): identifier names, uniqueness, type extras, defaults, references, indexes; warnings array.
+- [x] Schema card content (`table_ids`), sitemap card content (node ids), shape `page_id`.
+- [x] `GET /api/items/{id}/er` (Mermaid source for the UI) and ER rendering in `render/` (layered by foreign key, crow's-foot ends, stubs for tables outside the view), so `render.svg`/`render.png` work on schema cards.
+- [x] `table.*` SSE events with `schema_version`.
+- [x] MCP: `get_schema`, `add_table`, `update_table`, `delete_table`; tool descriptions list the logical types.
+- [x] `update_board` with `stack`.
+- [x] Tests: id kept on rename-by-name, FK resolution across cards, refusing to delete a referenced table, `force` removing references, cardinality in the ER output, every validation rule.
 
 ### Frontend
 
-- [ ] Schema card: tables in view, column grid editor (logical type dropdown, per-type extras, FK picker across the board), Add table / Show existing table, Mermaid ER preview below.
-- [ ] Schema panel listing every table and which cards show it.
-- [ ] Sitemap editor: nested list, drag to reorder, slugs, purposes.
-- [ ] Shape "link to page" picker; slug shown under linked shapes.
-- [ ] Board settings: title, description, stack.
+- [x] Schema card: tables in view, column grid editor (logical type dropdown, per-type extras, FK picker across the board), Add table / Show existing table, Mermaid ER preview below.
+- [x] Schema panel listing every table and which cards show it.
+- [x] Sitemap editor: nested list, drag to reorder, slugs, purposes.
+- [x] Shape "link to page" picker; slug shown under linked shapes.
+- [x] Board settings: title, description, stack.
+
+**Status:** done (2026-11-06). Notes:
+
+- The rules (§5.4, §5.5) live in `crates/board/src/schema/` as pure functions with unit tests for each one. `service/tables.rs` stores the result. `board-model` holds the published types (`ColumnType`, `SchemaColumn`, `SchemaIndex`, `TableDefinition`, `SitemapNode`) with `JsonSchema`.
+- Names are unique ignoring case, at most 64 characters (MySQL's limit). A reference without a column means the table's primary key. Removing a column another table references is refused (422) until the reference goes.
+- Undeleting a table is refused (409) if its name is now taken, or if a table it references is still in the trash.
+- Schema cards keep the ids of trashed tables in their content (so undelete brings them back); the UI, renderer and ER endpoint skip them.
+- New pages and columns made in the UI get their `pg_`/`col_` id on the client, so an entry has one id from its first keystroke, even while saves are in flight. The server accepts any well-formed id that isn't used elsewhere.
+- The card's ER preview is the server's own SVG, not Mermaid in the browser: one renderer, and no Mermaid bundle. `/er` still returns Mermaid source for other tools.
+- A schema card exported on its own is its ER diagram; inside a frame, the diagram is drawn scaled into the card. Sitemap cards export as their page tree.
+- Flows from `add_items` (layout auto) can link shapes to pages with `page`.
+- Copy and paste: sitemap copies get new page ids. Pasting onto another board drops page links, and keeps a schema card's tables only where a table of the same name exists there.
+- Also: debug builds now write line tables only, and no debug info for dependencies (the build directory went from 11 GB to 1.5 GB); `scripts/e2e.sh` takes test files to run.
+- Tests: 20 schema rule tests, 4 content reference tests, ER render tests, `tests/schema.rs` (8), an MCP table test in `tests/live.rs`, and `e2e/schema.mjs` (25 browser checks).
 
 **Done when:** you can model a real client's database across two schema cards with foreign keys between them, rename a column without its id changing, export the ER diagram as a PNG, and Claude can add a table by name that references an existing one.
 

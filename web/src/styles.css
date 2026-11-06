@@ -1395,3 +1395,423 @@ body.is-dragging {
   font-weight: 400;
   color: var(--ink-soft);
 }
+
+/* ---------- Schema cards (phase 5) ---------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.card-kind {
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}
+
+.schema {
+  padding: 0.5rem 0.6rem 0.7rem;
+  font-size: var(--step--1);
+}
+
+.schema-empty {
+  margin: 0.3rem 0.2rem 0.6rem;
+  color: var(--ink-soft);
+}
+
+.schema-table {
+  margin-bottom: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--card-edge) 70%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.schema-table-header {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.3rem;
+  background: var(--surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--card-edge) 70%, transparent);
+}
+
+.schema-table-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 650;
+  font-size: var(--step-0);
+  border-color: transparent !important;
+  background: none !important;
+  padding: 0.15rem 0.3rem !important;
+}
+
+.schema-table-name:hover {
+  border-color: color-mix(in srgb, var(--card-edge) 70%, transparent) !important;
+}
+
+.schema-table-action {
+  padding: 0.15rem 0.45rem;
+  color: var(--ink-soft);
+}
+
+.schema-error {
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--card));
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.column-grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.column-grid th {
+  padding: 0.25rem 0.3rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.column-grid td {
+  padding: 0.1rem 0.15rem;
+  vertical-align: middle;
+}
+
+.column-grid tbody tr:not(.col-details) {
+  border-top: 1px solid color-mix(in srgb, var(--card-edge) 40%, transparent);
+}
+
+.column-grid tr.is-invalid .col-name {
+  border-color: var(--danger) !important;
+}
+
+.column-grid input:not([type="checkbox"]),
+.column-grid select {
+  padding: 0.15rem 0.3rem;
+  font-size: var(--step--1);
+  border-color: transparent;
+  background: none;
+}
+
+.column-grid input:not([type="checkbox"]):hover,
+.column-grid select:hover {
+  border-color: color-mix(in srgb, var(--card-edge) 70%, transparent);
+}
+
+.column-grid select {
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: inherit;
+  font: inherit;
+  font-size: var(--step--1);
+}
+
+.col-name {
+  width: 100%;
+  min-width: 6rem;
+  font-weight: 600;
+}
+
+.col-type {
+  white-space: nowrap;
+}
+
+.col-extra {
+  width: 3.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.col-check {
+  width: 2.4rem;
+  text-align: center !important;
+}
+
+.col-check input {
+  accent-color: var(--ink);
+}
+
+.col-ref {
+  max-width: 9.5rem;
+}
+
+.col-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.col-actions .icon-button {
+  padding: 0 0.35rem;
+  font-size: var(--step-0);
+  color: var(--ink-soft);
+}
+
+.col-details td {
+  padding: 0.2rem 0.4rem 0.5rem 0.4rem;
+}
+
+.col-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.4rem 0.6rem;
+  padding: 0.45rem;
+  background: var(--surface);
+  border-radius: var(--radius-control);
+}
+
+.col-details-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: var(--ink-soft);
+}
+
+.col-details-grid input,
+.col-details-grid select {
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--card-edge) 70%, transparent) !important;
+  background: var(--card) !important;
+}
+
+.col-comment {
+  grid-column: 1 / -1;
+}
+
+.schema-add-column {
+  margin: 0.2rem 0.3rem 0.35rem;
+  padding: 0.15rem 0.5rem;
+  color: var(--ink-soft);
+}
+
+.schema-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.schema-footer .text-button {
+  padding: 0.2rem 0.55rem;
+}
+
+.schema-footer select {
+  font: inherit;
+  font-size: var(--step--1);
+  color: inherit;
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-control);
+  padding: 0.2rem 0.4rem;
+}
+
+.er-preview {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem;
+  background: var(--surface);
+  border-radius: var(--radius-control);
+  overflow: auto;
+}
+
+.er-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+/* ---------- Sitemap cards ---------- */
+
+.sitemap {
+  padding: 0.45rem 0.5rem 0.6rem;
+  font-size: var(--step--1);
+}
+
+.sitemap ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sitemap .page > ul {
+  margin-left: 0.85rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid color-mix(in srgb, var(--card-edge) 60%, transparent);
+}
+
+.page-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  border-radius: var(--radius-control);
+}
+
+.page-row.is-dragging {
+  opacity: 0.45;
+}
+
+.page-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--mark);
+}
+
+.page-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--mark);
+}
+
+.page-row.drop-inside {
+  background: color-mix(in srgb, var(--mark) 18%, transparent);
+}
+
+.page-handle {
+  cursor: grab;
+  color: var(--ink-soft);
+  padding: 0 0.15rem;
+  user-select: none;
+}
+
+.page-title,
+.page-slug,
+.page-purpose {
+  border-color: transparent !important;
+  background: none !important;
+  padding: 0.15rem 0.3rem !important;
+  font-size: var(--step--1);
+}
+
+.page-title:hover,
+.page-slug:hover,
+.page-purpose:hover {
+  border-color: color-mix(in srgb, var(--card-edge) 70%, transparent) !important;
+}
+
+.page-title {
+  flex: 1;
+  min-width: 4rem;
+  font-weight: 600;
+}
+
+.page-slug {
+  width: 7.5rem;
+  color: var(--ink-soft);
+}
+
+.page-actions {
+  display: flex;
+  opacity: 0;
+}
+
+.page-row:hover .page-actions,
+.page-row:focus-within .page-actions {
+  opacity: 1;
+}
+
+.page-actions .icon-button {
+  padding: 0 0.35rem;
+  font-size: var(--step-0);
+  color: var(--ink-soft);
+}
+
+/* A page's purpose shows when it has one, or while the page is being edited. */
+.page-purpose {
+  display: none;
+  width: calc(100% - 1.3rem);
+  margin-left: 1.3rem;
+  color: var(--ink-soft);
+}
+
+.page-purpose.has-purpose,
+.page-purpose:focus {
+  display: block;
+}
+
+.page-row:focus-within + .page-purpose {
+  display: block;
+}
+
+.sitemap-hint {
+  margin: 0.6rem 0.2rem 0;
+  color: var(--ink-soft);
+}
+
+/* A journey step's linked page, under the shape. */
+.shape-page {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 0.35rem;
+  white-space: nowrap;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--mat) 85%, transparent);
+  border-radius: var(--radius-control);
+  pointer-events: none;
+}
+
+/* ---------- Schema panel and settings ---------- */
+
+.schema-list {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+}
+
+.schema-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--card-edge) 60%, transparent);
+}
+
+.schema-list-main {
+  min-width: 0;
+}
+
+.schema-list-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.3rem 0 0;
+}
+
+.schema-list-actions {
+  display: flex;
+  gap: 0.2rem;
+  flex: none;
+}
+
+.chip {
+  padding: 0.05rem 0.5rem;
+  font-size: var(--step--1);
+  border-radius: 999px;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.8rem;
+}
+
+.settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.settings textarea {
+  resize: vertical;
+}
+
+.settings-help {
+  font-weight: 400;
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}

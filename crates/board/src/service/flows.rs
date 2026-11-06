@@ -56,6 +56,12 @@ pub struct FlowNode {
     pub text: String,
     #[serde(default)]
     pub color: Option<Color>,
+    /// The sitemap page this step is on, by slug.
+    #[serde(default)]
+    pub page: Option<String>,
+    /// Or by id.
+    #[serde(default)]
+    pub page_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,6 +102,12 @@ pub async fn create(
         .nodes
         .iter()
         .filter_map(|n| n.color.map(|c| (n.reference.as_str(), c)))
+        .collect();
+    let pages: HashMap<&str, &FlowNode> = req
+        .nodes
+        .iter()
+        .filter(|n| n.page.is_some() || n.page_id.is_some())
+        .map(|n| (n.reference.as_str(), n))
         .collect();
 
     // Sizes: shape defaults, widened for long labels.
@@ -177,11 +189,18 @@ pub async fn create(
         });
     }
     for (i, n) in flow.nodes.iter().enumerate() {
-        let content = serde_json::to_value(ShapeContent {
+        let page = pages.get(n.id.as_str());
+        let mut content = serde_json::to_value(ShapeContent {
             shape: n.shape,
             text: n.text.clone(),
+            page_id: page.and_then(|p| p.page_id.clone()),
+            page: None,
         })
         .map_err(|e| AppError::Internal(e.into()))?;
+        // `page` is input only, so it isn't serialised; pass the slug through.
+        if let Some(slug) = page.and_then(|p| p.page.as_ref()) {
+            content["page"] = json!(slug);
+        }
         ops.push(Op::CreateItem {
             reference: Some(format!("n{i}")),
             kind: "shape".into(),

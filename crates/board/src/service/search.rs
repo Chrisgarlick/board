@@ -1,6 +1,6 @@
-//! Full-text search over items (and, from phase 5, schema tables).
+//! Full-text search over items and schema tables.
 //!
-//! `search_fts` holds one row per live item. The service layer keeps it in
+//! `search_fts` holds one row per live item or table. The service layer keeps it in
 //! step: index on create, update and undelete; remove on delete.
 
 use serde::Serialize;
@@ -15,11 +15,28 @@ pub async fn index_item(
     title: Option<&str>,
     body: &str,
 ) -> AppResult<()> {
-    unindex_item(conn, item_id).await?;
+    index(conn, "item", item_id, board_id, title, body).await
+}
+
+pub async fn unindex_item(conn: &mut SqliteConnection, item_id: &str) -> AppResult<()> {
+    unindex(conn, "item", item_id).await
+}
+
+/// (Re)index one entity: `item` or `table`.
+pub async fn index(
+    conn: &mut SqliteConnection,
+    entity_kind: &str,
+    id: &str,
+    board_id: &str,
+    title: Option<&str>,
+    body: &str,
+) -> AppResult<()> {
+    unindex(conn, entity_kind, id).await?;
     sqlx::query(
-        "INSERT INTO search_fts (entity_kind, entity_id, board_id, title, body) VALUES ('item', ?, ?, ?, ?)",
+        "INSERT INTO search_fts (entity_kind, entity_id, board_id, title, body) VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(item_id)
+    .bind(entity_kind)
+    .bind(id)
     .bind(board_id)
     .bind(title.unwrap_or(""))
     .bind(body)
@@ -28,9 +45,10 @@ pub async fn index_item(
     Ok(())
 }
 
-pub async fn unindex_item(conn: &mut SqliteConnection, item_id: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM search_fts WHERE entity_kind = 'item' AND entity_id = ?")
-        .bind(item_id)
+pub async fn unindex(conn: &mut SqliteConnection, entity_kind: &str, id: &str) -> AppResult<()> {
+    sqlx::query("DELETE FROM search_fts WHERE entity_kind = ? AND entity_id = ?")
+        .bind(entity_kind)
+        .bind(id)
         .execute(conn)
         .await?;
     Ok(())

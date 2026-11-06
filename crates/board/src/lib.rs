@@ -20,6 +20,7 @@ pub mod flow;
 pub mod mcp;
 pub mod render;
 pub mod routes;
+pub mod schema;
 pub mod service;
 pub mod signing;
 pub mod types;

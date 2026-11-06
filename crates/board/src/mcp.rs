@@ -38,7 +38,7 @@ use crate::service::connectors::{self, Anchor};
 use crate::service::flows::{self, FlowEdge, FlowNode, FlowRequest};
 use crate::service::items::{self, Item};
 use crate::service::moves::{self, MoveRequest};
-use crate::service::{boards, search};
+use crate::service::{boards, search, tables};
 use crate::types::{Caller, Scope};
 
 /// Content in `get_board` is cut to about this many bytes per item.
@@ -47,10 +47,13 @@ const TRUNCATE_BYTES: usize = 2_000;
 const USER_EDIT_GUARD: TimeDelta = TimeDelta::minutes(5);
 
 const INSTRUCTIONS: &str = "Board is a planning canvas. A board holds items (cards, shapes, \
-sticky notes, text and frames) joined by connectors. Use get_board to see a board; draw flows \
-with draw_flow (Mermaid) or add_items with layout \"auto\"; put drawings meant for a planning \
-document inside a frame. Every change you make is recorded as yours and can be undone by the \
-user, so act directly rather than asking for permission for ordinary edits.";
+sticky notes, text and frames) joined by connectors, plus one database schema (its tables). \
+Use get_board to see a board; draw flows with draw_flow (Mermaid) or add_items with layout \
+\"auto\"; put drawings meant for a planning document inside a frame. Design data with \
+add_table and update_table (references by table and column name are fine), and show tables \
+on a schema card. Pages go in a sitemap card; link a journey step to its page with the \
+shape's \"page\" (slug). Every change you make is recorded as yours and can be undone by \
+the user, so act directly rather than asking for permission for ordinary edits.";
 
 type ToolResult = Result<String, String>;
 
@@ -138,7 +141,7 @@ pub struct NewItemArg {
     pub reference: Option<String>,
     /// card, shape, sticky, text or frame.
     pub kind: String,
-    /// For cards: note or checklist.
+    /// For cards: note, checklist, schema or sitemap.
     #[serde(default)]
     pub card_type: Option<String>,
     /// Cards and frames only.
@@ -285,7 +288,7 @@ pub struct ConnectorId {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ItemImage {
-    /// A frame (drawn with everything in it) or any single item.
+    /// A frame (drawn with everything in it), a schema card (its ER diagram) or any single item.
     pub item_id: String,
     /// Pixels per canvas unit, 1–4 (default 1, which is plenty to look at).
     #[serde(default)]
@@ -293,11 +296,57 @@ pub struct ItemImage {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct Revisions {
+    /// An item, or
+    #[serde(default)]
+    pub item_id: Option<String>,
+    /// a table.
+    #[serde(default)]
+    pub table_id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct RestoreRevision {
-    pub item_id: String,
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub table_id: Option<String>,
     pub revision_id: i64,
-    /// The item's current version.
+    /// The item's (or table's) current version.
     pub version: i64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct AddTable {
+    pub board_id: String,
+    /// The table's database name: letters, digits and underscores.
+    pub name: String,
+    /// { "comment"?, "columns": [...], "indexes"?: [...] }; see the tool description.
+    #[serde(default)]
+    pub definition: Option<Value>,
+    /// A schema card to show the new table on.
+    #[serde(default)]
+    pub item_id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct UpdateTable {
+    pub table_id: String,
+    /// The table's current version (from get_schema).
+    pub version: i64,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The whole new definition. Keep each existing column's "id" (or its name) so the id survives.
+    #[serde(default)]
+    pub definition: Option<Value>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct DeleteTable {
+    pub table_id: String,
+    /// Delete even if other tables reference it (those references are removed), or if the user edited it in the last 5 minutes.
+    #[serde(default)]
+    pub force: bool,
 }
 
 // ---------- Server ----------
@@ -317,6 +366,9 @@ Item kinds and their content:
 - frame: needs "title"; content {} or { "description": "…" }. Items whose centre is inside a frame belong to it.
 - card with card_type "note": needs "title"; content { "markdown": "…" }
 - card with card_type "checklist": needs "title"; content { "items": [{ "text": "…", "done": false, "group": "optional" }] }
+- card with card_type "schema": needs "title"; content { "tables": ["users", "orders"] } (names; stored as table_ids). Shows those tables of the board schema as an ER diagram. Create tables with add_table first.
+- card with card_type "sitemap": needs "title"; content { "root": { "title": "Home", "slug": "/", "purpose": "…", "children": [ { "title": "Shop", "slug": "/shop", "children": [] } ] } }. Pages get stable ids; when updating, keep each page's "id" (or its slug) so the id survives. One sitemap per board is normal.
+- shapes can link to a sitemap page: add "page": "/login" (its slug) to the shape's content (stored as page_id).
 
 Shapes, stickies and text have no title: their words go in content.text.
 With layout "auto", every item must be a shape; they're laid out as a flow (like draw_flow) and connectors become its edges. Otherwise items go where you put them (x, y) or in the next free space."#;
@@ -330,6 +382,19 @@ Supported subset:
 - subgraph Title … end (one level) becomes a frame
 - %% comments; ; separates statements
 Anything else (classDef, style, &, click…) is an error naming the line."#;
+
+const TABLE_DESCRIPTION: &str = r#"Add a table to the board's schema (one schema per board). References by name are fine.
+
+definition: { "comment": "…", "columns": [column, …], "indexes": [{ "columns": ["a", "b"], "unique": false }] }
+column: { "name": "user_id", "type": "bigint", … } with optional
+  "nullable": bool (default false), "primary": bool, "unique": bool, "default": "literal",
+  "generated": "increment" | "uuid" | "now" | "now_on_update",
+  "references": { "table": "users", "column": "id" } (column defaults to the table's primary key),
+  "label": "Human label", "comment": "…", "native_type": "varchar(191)" (stack-specific, recorded only)
+Logical types (use these, not database types): string (with "length"), text, integer, bigint,
+decimal (with "precision", "scale"), boolean, date, time, datetime, uuid, json, enum (with "values": [...]), binary.
+Names: letters, digits and underscores, not starting with a digit; unique on the board (tables) or in the table (columns).
+Returns the table with ids for every column, the new schema_version, and any warnings (they don't block the write)."#;
 
 #[tool_router]
 impl BoardMcp {
@@ -345,14 +410,14 @@ impl BoardMcp {
     }
 
     #[tool(
-        description = "List boards: id, title, stack, number of items. Archived boards are left out."
+        description = "List boards: id, title, stack, number of items and tables. Archived boards are left out."
     )]
     async fn list_boards(&self) -> ToolResult {
         let mut conn = self.conn().await?;
         let list = boards::list(&mut conn, None, false).await.map_err(fail)?;
         ok(json!(list
             .iter()
-            .map(|b| json!({ "id": b.board.id, "title": b.board.title, "stack": b.board.stack, "items": b.item_count }))
+            .map(|b| json!({ "id": b.board.id, "title": b.board.title, "stack": b.board.stack, "items": b.item_count, "tables": b.table_count }))
             .collect::<Vec<_>>()))
     }
 
@@ -410,7 +475,7 @@ impl BoardMcp {
     }
 
     #[tool(
-        description = "A board's items and connectors. Item content is cut to about 2 KB (marked \"truncated\": true; use get_item for all of it). Each item has a version, needed to update it. Filter with frame_id or kinds on big boards."
+        description = "A board's items and connectors, and its tables by name (get_schema has their columns). Item content is cut to about 2 KB (marked \"truncated\": true; use get_item for all of it). Each item has a version, needed to update it. Filter with frame_id or kinds on big boards."
     )]
     async fn get_board(&self, Parameters(p): Parameters<GetBoard>) -> ToolResult {
         let mut conn = self.conn().await?;
@@ -434,10 +499,16 @@ impl BoardMcp {
                         "from_anchor": c.from_anchor, "to_anchor": c.to_anchor, "style": c.style })
             })
             .collect();
+        let tables: Vec<Value> = full
+            .tables
+            .iter()
+            .map(|t| json!({ "id": t.id, "name": t.name, "columns": t.definition.columns.len(), "version": t.version }))
+            .collect();
         ok(json!({
             "board": full.board,
             "items": items.iter().map(|i| summary(i)).collect::<Vec<_>>(),
             "connectors": connectors,
+            "tables": tables,
         }))
     }
 
@@ -744,14 +815,14 @@ impl BoardMcp {
     }
 
     #[tool(
-        description = "See a frame (or any item) as an image: returns the PNG, plus a signed link (valid 7 days) you can share. Use it to check a flow you drew looks right."
+        description = "See a frame, a schema card (as its ER diagram) or any item as an image: returns the PNG, plus a signed link (valid 7 days) you can share. Use it to check a flow or schema you made looks right."
     )]
     async fn get_item_image(
         &self,
         Parameters(p): Parameters<ItemImage>,
     ) -> Result<CallToolResult, String> {
         let mut conn = self.conn().await?;
-        let (frame, list, conns) = crate::render::scene(&mut conn, &p.item_id)
+        let scene = crate::render::scene(&mut conn, &p.item_id)
             .await
             .map_err(fail)?;
         drop(conn);
@@ -764,12 +835,10 @@ impl BoardMcp {
             ..Default::default()
         };
         let cache = self.state.renders.clone();
-        let png = tokio::task::spawn_blocking(move || {
-            crate::render::draw(&cache, frame.as_ref(), &list, &conns, req)
-        })
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(fail)?;
+        let png = tokio::task::spawn_blocking(move || crate::render::draw(&cache, &scene, req))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(fail)?;
         let link = crate::routes::images::image_link(
             &self.state,
             &p.item_id,
@@ -795,18 +864,128 @@ impl BoardMcp {
         ]))
     }
 
-    #[tool(description = "An item's saved versions, newest first, with who made each.")]
-    async fn list_revisions(&self, Parameters(p): Parameters<ItemId>) -> ToolResult {
+    #[tool(
+        description = "An item's (or table's) saved versions, newest first, with who made each. Give item_id or table_id."
+    )]
+    async fn list_revisions(&self, Parameters(p): Parameters<Revisions>) -> ToolResult {
         let mut conn = self.conn().await?;
-        ok(json!(
-            items::revisions(&mut conn, &p.item_id)
-                .await
-                .map_err(fail)?
-        ))
+        match (p.item_id, p.table_id) {
+            (Some(item), None) => ok(json!(
+                items::revisions(&mut conn, &item).await.map_err(fail)?
+            )),
+            (None, Some(table)) => ok(json!(
+                tables::revisions(&mut conn, &table).await.map_err(fail)?
+            )),
+            _ => Err(fail(AppError::invalid(
+                "item_id",
+                "give item_id or table_id",
+            ))),
+        }
     }
 
     #[tool(
-        description = "Put an item back to an earlier revision. Needs the item's current version."
+        description = "The board's database schema: every table with its columns (ids and names), indexes, version, and the board's schema_version."
+    )]
+    async fn get_schema(&self, Parameters(p): Parameters<BoardId>) -> ToolResult {
+        let mut conn = self.conn().await?;
+        let board = boards::get(&mut conn, &p.board_id).await.map_err(fail)?;
+        let list = tables::list_live(&mut conn, &p.board_id)
+            .await
+            .map_err(fail)?;
+        ok(json!({ "schema_version": board.schema_version, "tables": list }))
+    }
+
+    #[tool(description = TABLE_DESCRIPTION)]
+    async fn add_table(
+        &self,
+        Parameters(p): Parameters<AddTable>,
+        Extension(parts): Extension<Parts>,
+    ) -> ToolResult {
+        let who = caller(&parts)?;
+        let mut tx = db::write_tx(&self.state.pool)
+            .await
+            .map_err(|e| fail(e.into()))?;
+        let written = tables::create(
+            &mut tx,
+            ctx(&self.state, who),
+            &p.board_id,
+            tables::NewTable {
+                name: p.name,
+                definition: p.definition.unwrap_or_else(|| json!({})),
+                item_id: p.item_id,
+            },
+        )
+        .await
+        .map_err(fail)?;
+        tx.commit().await.map_err(|e| fail(e.into()))?;
+        crate::routes::schema::publish(&self.state, None, "table.created", &written);
+        ok(json!(written))
+    }
+
+    #[tool(
+        description = "Change a table's name or definition (same shape as add_table; the definition replaces the whole thing). Needs the table's current version. Columns keep their ids when you send the id back or keep the name; a rename must send the id. Removing a column other tables reference is refused."
+    )]
+    async fn update_table(
+        &self,
+        Parameters(p): Parameters<UpdateTable>,
+        Extension(parts): Extension<Parts>,
+    ) -> ToolResult {
+        let who = caller(&parts)?;
+        let mut tx = db::write_tx(&self.state.pool)
+            .await
+            .map_err(|e| fail(e.into()))?;
+        let written = tables::update(
+            &mut tx,
+            ctx(&self.state, who),
+            &p.table_id,
+            tables::TablePatch {
+                version: p.version,
+                name: p.name,
+                definition: p.definition,
+            },
+        )
+        .await
+        .map_err(fail)?;
+        tx.commit().await.map_err(|e| fail(e.into()))?;
+        crate::routes::schema::publish(&self.state, None, "table.updated", &written);
+        ok(json!(written))
+    }
+
+    #[tool(
+        description = "Move a table to the trash (the user can restore it). Refused while other tables reference it, or if the user edited it in the last 5 minutes, unless force is true; force also removes the references to it."
+    )]
+    async fn delete_table(
+        &self,
+        Parameters(p): Parameters<DeleteTable>,
+        Extension(parts): Extension<Parts>,
+    ) -> ToolResult {
+        let who = caller(&parts)?;
+        let mut tx = db::write_tx(&self.state.pool)
+            .await
+            .map_err(|e| fail(e.into()))?;
+        if !p.force {
+            let t = tables::get(&mut tx, &p.table_id).await.map_err(fail)?;
+            let cutoff = self.state.clock.now().minus(USER_EDIT_GUARD).to_db();
+            if t.updated_by == "user" && t.content_updated_at > cutoff {
+                return Err(fail(AppError::State {
+                    code: "recently_edited",
+                    message: format!(
+                        "the user edited `{}` in the last 5 minutes; check with them, or pass force: true",
+                        t.name
+                    ),
+                }));
+            }
+        }
+        let written = tables::delete(&mut tx, ctx(&self.state, who), &p.table_id, p.force)
+            .await
+            .map_err(fail)?;
+        tx.commit().await.map_err(|e| fail(e.into()))?;
+        crate::routes::schema::publish(&self.state, None, "table.deleted", &written);
+        ok(json!(written))
+    }
+
+    #[tool(
+        description = "Put an item (item_id) or table (table_id) back to an earlier revision. Needs its current version."
     )]
     async fn restore_revision(
         &self,
@@ -817,10 +996,33 @@ impl BoardMcp {
         let mut tx = db::write_tx(&self.state.pool)
             .await
             .map_err(|e| fail(e.into()))?;
+        let item_id = match (p.item_id, p.table_id) {
+            (Some(item), None) => item,
+            (None, Some(table)) => {
+                let written = tables::restore(
+                    &mut tx,
+                    ctx(&self.state, who),
+                    &table,
+                    p.revision_id,
+                    p.version,
+                )
+                .await
+                .map_err(fail)?;
+                tx.commit().await.map_err(|e| fail(e.into()))?;
+                crate::routes::schema::publish(&self.state, None, "table.updated", &written);
+                return ok(json!(written));
+            }
+            _ => {
+                return Err(fail(AppError::invalid(
+                    "item_id",
+                    "give item_id or table_id",
+                )));
+            }
+        };
         let item = items::restore(
             &mut tx,
             ctx(&self.state, who),
-            &p.item_id,
+            &item_id,
             p.revision_id,
             p.version,
         )
@@ -891,11 +1093,23 @@ impl BoardMcp {
                 .and_then(|c| serde_json::from_value(c.clone()).ok());
             let reference = item.reference.unwrap_or_else(|| format!("item{i}"));
             refs.insert(reference.clone(), reference.clone());
+            let page = item
+                .content
+                .get("page")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let page_id = item
+                .content
+                .get("page_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             nodes.push(FlowNode {
                 reference,
                 shape: Some(shape),
                 text,
                 color,
+                page,
+                page_id,
             });
         }
         let edges = p

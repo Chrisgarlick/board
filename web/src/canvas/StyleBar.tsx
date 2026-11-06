@@ -10,6 +10,7 @@ import {
   bottomZ,
   connectors,
   historyFor,
+  pages,
   place,
   remove,
   report,
@@ -21,7 +22,7 @@ import {
   topZ,
   updateConnector,
 } from "../store";
-import type { Color, ConnectorStyle, Item, ShapeKind, TextContent } from "../types";
+import type { Color, ConnectorStyle, Item, ShapeContent, ShapeKind, TextContent } from "../types";
 import { liveRect } from "./interact";
 import { SHAPE_LABELS } from "./shapes";
 import { view } from "./viewport";
@@ -120,6 +121,7 @@ function ItemBar() {
           ))}
         </select>
       )}
+      {shapes && list.length === 1 && pages.value.length > 0 && <PagePicker shape={first} />}
       {alignable && (
         <div class="segmented" role="group" aria-label="Text alignment">
           {(["left", "center", "right"] as const).map((a) => (
@@ -172,6 +174,28 @@ function ItemBar() {
         Delete
       </button>
     </div>
+  );
+}
+
+/** Link a journey step to the sitemap page it happens on (spec 5.1). */
+function PagePicker({ shape }: { shape: Item }) {
+  const current = (shape.content as ShapeContent).page_id ?? "";
+  return (
+    <select
+      aria-label="Page"
+      title="The sitemap page this step happens on"
+      value={current}
+      onChange={(e) => reshape([shape.id], { page_id: e.currentTarget.value || undefined })}
+    >
+      <option value="">No page</option>
+      {pages.value.map((p) => (
+        <option key={p.node.id} value={p.node.id}>
+          {"\u2003".repeat(p.depth)}
+          {p.node.title || "Untitled"}
+          {p.node.slug ? `  ${p.node.slug}` : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 

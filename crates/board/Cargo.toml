@@ -35,7 +35,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 rmcp = { version = "3.9.0", features = ["server", "transport-streamable-http-server", "macros"] }
 async-stream = "0.3.6"
 futures-util = "0.3.34"
-schemars = "1"
+schemars.workspace = true
 ttf-parser = "0.25.1"
 # Text support only: no system fonts (renders must match on every machine)
 # and no raster images (a rendered SVG never loads external content).

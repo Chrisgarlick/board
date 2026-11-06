@@ -1,6 +1,7 @@
 //! Board draws its own images (spec section 8.1): frames, selections and
 //! single items as SVG, and PNG from that SVG. No browser involved.
 
+pub mod er;
 pub mod png;
 pub mod routing;
 pub mod svg;
@@ -13,8 +14,10 @@ use std::sync::{Arc, Mutex};
 use sqlx::SqliteConnection;
 
 use crate::error::{AppError, AppResult};
+use crate::schema::{self, BoardTable};
 use crate::service::connectors::{self, Connector};
 use crate::service::items::{self, Item};
+use crate::service::tables;
 pub use svg::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,23 +74,42 @@ impl Default for Request {
     }
 }
 
+/// Everything a render needs.
+#[derive(Debug, Clone, Default)]
+pub struct Scene {
+    /// The frame being rendered, if it's a frame.
+    pub frame: Option<Item>,
+    pub items: Vec<Item>,
+    pub connectors: Vec<Connector>,
+    /// The board's tables, for schema cards.
+    pub tables: Vec<BoardTable>,
+}
+
 /// What to draw for an item: a frame brings its members and the connectors
-/// between them; anything else is drawn alone.
-pub async fn scene(
-    conn: &mut SqliteConnection,
-    item_id: &str,
-) -> AppResult<(Option<Item>, Vec<Item>, Vec<Connector>)> {
+/// between them; anything else is drawn alone (a schema card as its ER diagram).
+pub async fn scene(conn: &mut SqliteConnection, item_id: &str) -> AppResult<Scene> {
     let target = items::get(conn, item_id).await?;
+    let tables = tables::board_tables(conn, &target.board_id).await?;
     if target.kind != "frame" {
-        return Ok((None, vec![target], Vec::new()));
+        return Ok(Scene {
+            frame: None,
+            items: vec![target],
+            connectors: Vec::new(),
+            tables,
+        });
     }
     let members: Vec<Item> = items::list_live(conn, &target.board_id)
         .await?
         .into_iter()
         .filter(|i| i.frame_id.as_deref() == Some(item_id))
         .collect();
-    let conns = connectors::list_live(conn, &target.board_id).await?;
-    Ok((Some(target), members, conns))
+    let connectors = connectors::list_live(conn, &target.board_id).await?;
+    Ok(Scene {
+        frame: Some(target),
+        items: members,
+        connectors,
+        tables,
+    })
 }
 
 /// A selection: the given items (a frame brings its members) and the
@@ -96,7 +118,7 @@ pub async fn selection(
     conn: &mut SqliteConnection,
     board_id: &str,
     ids: &[String],
-) -> AppResult<(Vec<Item>, Vec<Connector>)> {
+) -> AppResult<Scene> {
     if ids.is_empty() {
         return Err(AppError::invalid("item_ids", "nothing to render"));
     }
@@ -116,26 +138,48 @@ pub async fn selection(
             "some of those items aren't on this board",
         ));
     }
-    Ok((picked, connectors::list_live(conn, board_id).await?))
+    Ok(Scene {
+        frame: None,
+        items: picked,
+        connectors: connectors::list_live(conn, board_id).await?,
+        tables: tables::board_tables(conn, board_id).await?,
+    })
+}
+
+/// The table ids a schema card shows.
+pub fn card_tables(item: &Item) -> Vec<String> {
+    item.content
+        .get("table_ids")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Draw and encode. Cached by the exact SVG and settings.
-pub fn draw(
-    cache: &Cache,
-    frame: Option<&Item>,
-    items: &[Item],
-    connectors: &[Connector],
-    req: Request,
-) -> AppResult<Arc<Vec<u8>>> {
-    let svg = svg::render(
-        frame,
-        items,
-        connectors,
-        svg::Options {
-            theme: req.theme,
-            title: req.title,
-        },
-    );
+pub fn draw(cache: &Cache, scene: &Scene, req: Request) -> AppResult<Arc<Vec<u8>>> {
+    let svg = match (&scene.frame, scene.items.as_slice()) {
+        // A schema card on its own is its ER diagram.
+        (None, [card]) if card.card_type.as_deref() == Some("schema") => {
+            let view = schema::er::view(&card_tables(card), &scene.tables);
+            let title = card.title.as_deref().filter(|_| req.title);
+            er::render(&view, title, req.theme)
+        }
+        _ => svg::render(
+            scene.frame.as_ref(),
+            &scene.items,
+            &scene.connectors,
+            svg::Options {
+                theme: req.theme,
+                title: req.title,
+                tables: &scene.tables,
+            },
+        ),
+    };
     let mut h = DefaultHasher::new();
     svg.hash(&mut h);
     req.format.ext().hash(&mut h);

@@ -10,3 +10,4 @@ pub mod items;
 pub mod moves;
 pub mod placement;
 pub mod search;
+pub mod tables;

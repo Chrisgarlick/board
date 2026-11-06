@@ -22,6 +22,7 @@ use tokio::sync::broadcast;
 
 use crate::service::connectors::Connector;
 use crate::service::items::Item;
+use crate::service::tables::Table;
 
 /// Events buffered per subscriber before it counts as lagging.
 const CAPACITY: usize = 512;
@@ -39,6 +40,11 @@ pub struct Change {
     pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<Table>,
+    /// On `table.*` changes: the board's schema version afterwards.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<i64>,
 }
 
 impl Change {
@@ -49,6 +55,8 @@ impl Change {
             connector: None,
             id: None,
             board: None,
+            table: None,
+            schema_version: None,
         }
     }
 
@@ -59,6 +67,8 @@ impl Change {
             connector: Some(connector),
             id: None,
             board: None,
+            table: None,
+            schema_version: None,
         }
     }
 
@@ -69,6 +79,8 @@ impl Change {
             connector: None,
             id: Some(id),
             board: None,
+            table: None,
+            schema_version: None,
         }
     }
 
@@ -79,6 +91,33 @@ impl Change {
             connector: None,
             id: None,
             board: Some(board),
+            table: None,
+            schema_version: None,
+        }
+    }
+
+    /// `table.created`, `table.updated` or `table.undeleted`.
+    pub fn table(kind: &'static str, table: Table, schema_version: i64) -> Self {
+        Self {
+            kind,
+            item: None,
+            connector: None,
+            id: None,
+            board: None,
+            table: Some(table),
+            schema_version: Some(schema_version),
+        }
+    }
+
+    pub fn table_deleted(id: String, schema_version: i64) -> Self {
+        Self {
+            kind: "table.deleted",
+            item: None,
+            connector: None,
+            id: Some(id),
+            board: None,
+            table: None,
+            schema_version: Some(schema_version),
         }
     }
 }

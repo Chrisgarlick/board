@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use super::routing::{self, Point, Rect, Route, Routing, Side, n};
 use super::text::{self, Weight};
+use crate::schema::{BoardTable, er as schema_er};
 use crate::service::connectors::Connector;
 use crate::service::items::Item;
 
@@ -32,23 +33,25 @@ impl Theme {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
+pub struct Options<'a> {
     pub theme: Theme,
     /// Draw a frame's title above it (off when a heading carries it, e.g. in a PDF).
     pub title: bool,
+    /// The board's tables, for schema cards.
+    pub tables: &'a [BoardTable],
 }
 
-struct Palette {
-    background: &'static str,
-    ink: &'static str,
-    ink_soft: &'static str,
-    card: &'static str,
-    card_edge: &'static str,
-    surface: &'static str,
-    frame_fill: &'static str,
-    frame_edge: &'static str,
-    connector: &'static str,
-    sticky: &'static str,
+pub(super) struct Palette {
+    pub(super) background: &'static str,
+    pub(super) ink: &'static str,
+    pub(super) ink_soft: &'static str,
+    pub(super) card: &'static str,
+    pub(super) card_edge: &'static str,
+    pub(super) surface: &'static str,
+    pub(super) frame_fill: &'static str,
+    pub(super) frame_edge: &'static str,
+    pub(super) connector: &'static str,
+    pub(super) sticky: &'static str,
 }
 
 const LIGHT: Palette = Palette {
@@ -78,7 +81,7 @@ const DARK: Palette = Palette {
 };
 
 /// (fill, line) for a palette colour, per theme. Mirrors styles.css.
-fn color(name: &str, theme: Theme) -> Option<(&'static str, &'static str)> {
+pub(super) fn color(name: &str, theme: Theme) -> Option<(&'static str, &'static str)> {
     let light = match name {
         "grey" => ("#eef1ee", "#5d6a63"),
         "blue" => ("#dde9f6", "#2f5f8f"),
@@ -109,7 +112,7 @@ const TITLE_SPACE: f64 = 30.0;
 const PADDING: f64 = 24.0;
 const HEAD: f64 = 10.0;
 
-fn esc(s: &str) -> String {
+pub(super) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -134,6 +137,10 @@ fn style_align(i: &Item, default: &'static str) -> String {
         .and_then(Value::as_str)
         .unwrap_or(default)
         .to_string()
+}
+
+pub(super) fn palette(theme: Theme) -> &'static Palette {
+    if theme == Theme::Light { &LIGHT } else { &DARK }
 }
 
 /// Render `items` (and the connectors among them). With `frame`, the image is
@@ -215,7 +222,7 @@ pub fn render(
             "shape" => draw_shape(&mut out, i, p, opts.theme),
             "sticky" => draw_sticky(&mut out, i, p, opts.theme),
             "text" => draw_text_item(&mut out, i, p, opts.theme),
-            "card" => draw_card(&mut out, i, p, opts.theme),
+            "card" => draw_card(&mut out, i, p, opts.theme, opts.tables),
             _ => {}
         }
     }
@@ -225,7 +232,7 @@ pub fn render(
 
 /// Wrapped lines as `<text>`, vertically centred on `cy` (or from `top`).
 #[allow(clippy::too_many_arguments)]
-fn text_block(
+pub(super) fn text_block(
     out: &mut String,
     lines: &[String],
     size: f64,
@@ -456,7 +463,7 @@ fn draw_text_item(out: &mut String, i: &Item, p: &Palette, theme: Theme) {
     text_block(out, &lines, size, 1.2, weight, fill, x, &align, i.y + 2.0);
 }
 
-fn draw_frame(out: &mut String, f: &Item, p: &Palette, opts: Options) {
+fn draw_frame(out: &mut String, f: &Item, p: &Palette, opts: Options<'_>) {
     let (fill, edge) = style_color(f)
         .and_then(|c| color(c, opts.theme))
         .unwrap_or((p.frame_fill, p.frame_edge));
@@ -486,7 +493,7 @@ fn draw_frame(out: &mut String, f: &Item, p: &Palette, opts: Options) {
     }
 }
 
-fn draw_card(out: &mut String, i: &Item, p: &Palette, theme: Theme) {
+fn draw_card(out: &mut String, i: &Item, p: &Palette, theme: Theme, tables: &[BoardTable]) {
     let accent = style_color(i).and_then(|c| color(c, theme)).map(|c| c.1);
     let _ = write!(
         out,
@@ -606,6 +613,113 @@ fn draw_card(out: &mut String, i: &Item, p: &Palette, theme: Theme) {
                     i.x + 32.0,
                     "left",
                     y,
+                );
+            }
+        }
+        Some("schema") => {
+            // The card's ER diagram, scaled to fit its body.
+            let view = schema_er::view(&super::card_tables(i), tables);
+            let (w, h, body) = super::er::body(&view, theme);
+            let (bw, bh) = ((i.w - 24.0).max(1.0), (body_h + 4.0).max(1.0));
+            if view.tables.is_empty() {
+                text_block(
+                    out,
+                    &["No tables on this card yet".to_string()],
+                    13.0,
+                    1.45,
+                    Weight::Regular,
+                    p.ink_soft,
+                    i.x + 13.0,
+                    "left",
+                    body_top,
+                );
+            } else {
+                let _ = write!(
+                    out,
+                    r#"<svg x="{}" y="{}" width="{}" height="{}" viewBox="0 0 {} {}" preserveAspectRatio="xMidYMin meet">{body}</svg>"#,
+                    n(i.x + 12.0),
+                    n(body_top - 2.0),
+                    n(bw),
+                    n(bh),
+                    n(w),
+                    n(h)
+                );
+            }
+        }
+        Some("sitemap") => {
+            // The page tree, indented.
+            let mut lines: Vec<(usize, String, String)> = Vec::new();
+            fn walk(node: &Value, depth: usize, out: &mut Vec<(usize, String, String)>) {
+                out.push((
+                    depth,
+                    str_of(node, "title").to_string(),
+                    str_of(node, "slug").to_string(),
+                ));
+                for child in node
+                    .get("children")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    walk(child, depth + 1, out);
+                }
+            }
+            if let Some(root) = i.content.get("root") {
+                walk(root, 0, &mut lines);
+            }
+            let row = 21.0;
+            let fit_rows = ((body_h / row).floor() as usize).max(1);
+            // Leave the last row for "and N more" when it doesn't all fit.
+            let rows = if lines.len() > fit_rows {
+                fit_rows.saturating_sub(1).max(1)
+            } else {
+                fit_rows
+            };
+            for (k, (depth, title, slug)) in lines.iter().take(rows).enumerate() {
+                let y = body_top + k as f64 * row;
+                let x = i.x + 13.0 + *depth as f64 * 16.0;
+                let title_w = text::width(title, 13.0, Weight::Regular);
+                let room = (i.x + i.w - 12.0 - x).max(1.0);
+                let fitted = text::fit(title, room, 18.0, 13.0, 13.0, 1.4, Weight::Regular);
+                text_block(
+                    out,
+                    &fitted.lines[..1.min(fitted.lines.len())],
+                    13.0,
+                    1.4,
+                    Weight::Regular,
+                    p.ink,
+                    x,
+                    "left",
+                    y,
+                );
+                let slug_x = x + title_w + 8.0;
+                if !slug.is_empty()
+                    && slug_x + text::width(slug, 11.5, Weight::Regular) < i.x + i.w - 12.0
+                {
+                    text_block(
+                        out,
+                        std::slice::from_ref(slug),
+                        11.5,
+                        1.4,
+                        Weight::Regular,
+                        p.ink_soft,
+                        slug_x,
+                        "left",
+                        y + 1.5,
+                    );
+                }
+            }
+            if lines.len() > rows {
+                text_block(
+                    out,
+                    &[format!("and {} more", lines.len() - rows)],
+                    11.5,
+                    1.4,
+                    Weight::Regular,
+                    p.ink_soft,
+                    i.x + 13.0,
+                    "left",
+                    body_top + rows as f64 * row,
                 );
             }
         }
@@ -808,6 +922,7 @@ mod tests {
             Options {
                 theme: Theme::Light,
                 title: true,
+                tables: &[],
             },
         );
         insta::assert_snapshot!(svg);
@@ -823,6 +938,7 @@ mod tests {
             Options {
                 theme: Theme::Light,
                 title: true,
+                tables: &[],
             },
         );
         let without = render(
@@ -832,6 +948,7 @@ mod tests {
             Options {
                 theme: Theme::Light,
                 title: false,
+                tables: &[],
             },
         );
         assert!(with.contains(r#"height="430""#));
@@ -849,6 +966,7 @@ mod tests {
             Options {
                 theme: Theme::Dark,
                 title: true,
+                tables: &[],
             },
         );
         assert!(dark.contains("Logged in &amp;"));
@@ -875,6 +993,7 @@ mod tests {
             Options {
                 theme: Theme::Light,
                 title: true,
+                tables: &[],
             },
         );
         assert!(svg.contains(r#"width="208" height="120""#), "{svg}");

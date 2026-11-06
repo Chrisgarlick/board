@@ -9,6 +9,7 @@ import {
   editContent,
   editingId,
   fresh,
+  pages,
   rememberEdit,
   selection,
   type ContentPatch,
@@ -143,7 +144,20 @@ function ShapeView({ item: i }: { item: Item }) {
       ) : (
         <div class={`shape-text align-${align}`}>{c.text}</div>
       )}
+      <PageSlug pageId={c.page_id} />
     </Box>
+  );
+}
+
+/** Under a journey step linked to a sitemap page: the page's slug. */
+function PageSlug({ pageId }: { pageId: string | undefined }) {
+  if (!pageId) return null;
+  const page = pages.value.find((p) => p.node.id === pageId);
+  if (!page) return null;
+  return (
+    <span class="shape-page" title={`On the page "${page.node.title}"`}>
+      {page.node.slug ?? page.node.title}
+    </span>
   );
 }
 

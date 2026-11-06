@@ -493,3 +493,91 @@ async fn mcp_needs_an_admin_token() {
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn claude_designs_tables_by_name() {
+    let app = TestApp::new().await;
+    let board = app.board().await;
+    let claude = app.token(Scope::Admin, Actor::Claude).await;
+    let mut mcp = Mcp::connect(&app, claude).await;
+    let mut rx = app.state.hub.subscribe(&board);
+
+    let card = mcp
+        .ok(
+            "add_items",
+            json!({ "board_id": board, "items": [{ "kind": "card", "card_type": "schema", "title": "Data", "content": { "tables": [] } }] }),
+        )
+        .await;
+    let card_id = card["items"][0]["id"].as_str().unwrap().to_string();
+    let _ = rx.recv().await.unwrap();
+
+    let users = mcp
+        .ok(
+            "add_table",
+            json!({ "board_id": board, "name": "users", "definition": { "columns": [
+                { "name": "id", "type": "bigint", "primary": true, "generated": "increment" },
+                { "name": "email", "type": "string", "length": 191, "unique": true },
+            ] } }),
+        )
+        .await;
+    let event = rx.recv().await.unwrap();
+    assert_eq!(event.changes[0].kind, "table.created");
+    assert_eq!(event.changes[0].schema_version, Some(1));
+
+    let orders = mcp
+        .ok(
+            "add_table",
+            json!({ "board_id": board, "name": "orders", "item_id": card_id, "definition": { "columns": [
+                { "name": "id", "type": "bigint", "primary": true },
+                { "name": "user_id", "type": "bigint", "references": { "table": "users" } },
+            ] } }),
+        )
+        .await;
+    let fk = &orders["table"]["definition"]["columns"][1]["references"];
+    assert_eq!(fk["table_id"], users["table"]["id"]);
+    assert_eq!(fk["column"], "id", "defaults to the primary key");
+    assert_eq!(orders["table"]["updated_by"], "claude");
+    assert_eq!(
+        orders["item"]["content"]["table_ids"][0], orders["table"]["id"],
+        "shown on the schema card"
+    );
+
+    let schema = mcp.ok("get_schema", json!({ "board_id": board })).await;
+    assert_eq!(schema["schema_version"], 2);
+    assert_eq!(schema["tables"].as_array().unwrap().len(), 2);
+
+    // Errors carry the path, so Claude can fix them.
+    let (is_error, text) = mcp
+        .call(
+            "add_table",
+            json!({ "board_id": board, "name": "payments", "definition": { "columns": [
+                { "name": "amount", "type": "money" } ] } }),
+        )
+        .await;
+    assert!(is_error);
+    let err: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(err["path"], "definition.columns[0].type");
+
+    // A referenced table needs force.
+    let users_id = users["table"]["id"].as_str().unwrap();
+    let (is_error, text) = mcp
+        .call("delete_table", json!({ "table_id": users_id }))
+        .await;
+    assert!(is_error);
+    assert!(text.contains("table_referenced"), "{text}");
+    let deleted = mcp
+        .ok(
+            "delete_table",
+            json!({ "table_id": users_id, "force": true }),
+        )
+        .await;
+    assert_eq!(deleted["updated"][0]["name"], "orders");
+
+    let revs = mcp
+        .ok(
+            "list_revisions",
+            json!({ "table_id": orders["table"]["id"] }),
+        )
+        .await;
+    assert!(!revs.as_array().unwrap().is_empty());
+}

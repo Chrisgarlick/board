@@ -12,7 +12,16 @@
 import { batch, computed, signal, type Signal } from "@preact/signals";
 
 import { api, ApiError, type Op } from "./api";
-import type { Board, Connector, Item } from "./types";
+import type {
+  Board,
+  Connector,
+  Item,
+  SitemapContent,
+  SitemapNode,
+  Table,
+  TableDefinition,
+  TableWritten,
+} from "./types";
 
 const SAVE_DELAY_MS = 600;
 const UNDO_LIMIT = 100;
@@ -60,6 +69,39 @@ export const historyFor = signal<string | null>(null);
 /** Set when the open board is deleted elsewhere. */
 export const boardGone = signal(false);
 
+/** The board schema: live tables by id. */
+export const tables = signal<ReadonlyMap<string, Table>>(new Map());
+export const schemaVersion = signal(0);
+/** The last validation error for a table whose latest edit didn't save. */
+export const tableErrors = signal<ReadonlyMap<string, { path: string; message: string }>>(new Map());
+export const tableList = computed(() =>
+  [...tables.value.values()].sort((a, b) => a.name.localeCompare(b.name)),
+);
+
+/** A page in one of the board's sitemaps. */
+export interface Page {
+  node: SitemapNode;
+  depth: number;
+  cardId: string;
+}
+
+/** Every page on the board's sitemap cards, depth first, cards in reading order. */
+export const pages = computed<Page[]>(() => {
+  const cards = itemIds.value
+    .map((id) => items.get(id)?.item.value)
+    .filter((i): i is Item => !!i && i.card_type === "sitemap")
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+  const out: Page[] = [];
+  for (const card of cards) {
+    const walk = (node: SitemapNode, depth: number) => {
+      out.push({ node, depth, cardId: card.id });
+      for (const child of node.children ?? []) walk(child, depth + 1);
+    };
+    walk((card.content as SitemapContent).root, 0);
+  }
+  return out;
+});
+
 export const selectedItems = computed(() =>
   [...selection.value].map((id) => items.get(id)?.item.value).filter((i): i is Item => !!i),
 );
@@ -87,10 +129,15 @@ export function membersOf(frameId: string): Item[] {
 
 // ---------- Loading and applying server state ----------
 
-export function load(b: Board, list: Item[], conns: Connector[]): void {
+export function load(b: Board, list: Item[], conns: Connector[], tableRows: Table[] = []): void {
   batch(() => {
     for (const q of queues.values()) q.cancel();
     queues.clear();
+    for (const q of tableQueues.values()) q.cancel();
+    tableQueues.clear();
+    tables.value = new Map(tableRows.map((t) => [t.id, t]));
+    tableErrors.value = new Map();
+    schemaVersion.value = b.schema_version;
     items.clear();
     connectors.clear();
     for (const i of list) items.set(i.id, makeState(i));
@@ -232,6 +279,8 @@ export interface RemoteChange {
   connector?: Connector;
   id?: string;
   board?: Board;
+  table?: Table;
+  schema_version?: number;
 }
 
 /** Apply changes made elsewhere: other tabs, Claude, scripts. */
@@ -272,7 +321,16 @@ export function applyRemote(changes: RemoteChange[]): void {
         case "board.deleted":
           boardGone.value = true;
           break;
+        case "table.created":
+        case "table.updated":
+        case "table.undeleted":
+          if (c.table) upsertTables([c.table]);
+          break;
+        case "table.deleted":
+          if (c.id) removeTable(c.id);
+          break;
       }
+      if (c.schema_version !== undefined) schemaVersion.value = Math.max(schemaVersion.value, c.schema_version);
     }
     upsertItems(upserts);
     resort();
@@ -301,6 +359,10 @@ export async function reload(): Promise<void> {
       for (const c of full.connectors) connectors.set(c.id, signal(c));
       connectorIds.value = full.connectors.map((c) => c.id);
       board.value = full.board;
+      const keepTables = new Set(full.tables.map((t) => t.id));
+      for (const id of tables.value.keys()) if (!keepTables.has(id)) removeTable(id);
+      upsertTables(full.tables);
+      schemaVersion.value = full.board.schema_version;
       resort();
     });
   } catch (err) {
@@ -312,7 +374,11 @@ export async function reload(): Promise<void> {
 // ---------- Undo and redo ----------
 
 /** One step of an undo entry: batch ops, or a text/style edit through the save queue. */
-type Step = { ops: Op[] } | { edit: { id: string; patch: ContentPatch } };
+type Step =
+  | { ops: Op[] }
+  | { edit: { id: string; patch: ContentPatch } }
+  | { table: { id: string; patch: TablePatch } }
+  | { run: () => Promise<void> };
 
 interface Entry {
   undo: Step[];
@@ -335,7 +401,9 @@ function remember(entry: Entry): void {
 async function runSteps(steps: Step[]): Promise<void> {
   for (const step of steps) {
     if ("ops" in step) await runOps(step.ops);
-    else editContent(step.edit.id, step.edit.patch, true);
+    else if ("edit" in step) editContent(step.edit.id, step.edit.patch, true);
+    else if ("table" in step) editTable(step.table.id, step.table.patch, true);
+    else await step.run();
   }
 }
 
@@ -583,7 +651,10 @@ export function restyle(ids: string[], patch: Record<string, unknown>): void {
   if (undo.length) remember({ undo, redo });
 }
 
-/** Change items' content fields (merged), e.g. a shape's type, as one undoable step. */
+/**
+ * Change items' content fields (merged), e.g. a shape's type, as one
+ * undoable step. A field set to `undefined` is removed.
+ */
 export function reshape(ids: string[], patch: Record<string, unknown>): void {
   const undo: Step[] = [];
   const redo: Step[] = [];
@@ -591,7 +662,8 @@ export function reshape(ids: string[], patch: Record<string, unknown>): void {
     const i = item(id);
     if (!i) continue;
     const before = i.content;
-    const after = { ...(i.content as object), ...patch };
+    const after: Record<string, unknown> = { ...(i.content as object), ...patch };
+    for (const k of Object.keys(after)) if (after[k] === undefined) delete after[k];
     editContent(id, { content: after }, true);
     undo.push({ edit: { id, patch: { content: before } } });
     redo.push({ edit: { id, patch: { content: after } } });
@@ -720,4 +792,226 @@ export function bottomZ(): number {
   let bottom = 0;
   for (const s of items.values()) bottom = Math.min(bottom, s.item.value.z);
   return bottom;
+}
+
+// ---------- The board schema ----------
+
+export interface TablePatch {
+  name?: string;
+  definition?: TableDefinition;
+}
+
+function upsertTables(list: Table[]): void {
+  const next = new Map(tables.value);
+  for (const t of list) {
+    // Keep local edits that haven't saved yet; the next save then conflicts
+    // with the newer version instead of overwriting it.
+    if (tableQueues.get(t.id)?.busy()) continue;
+    next.set(t.id, t);
+  }
+  tables.value = next;
+}
+
+function removeTable(id: string): void {
+  tableQueues.get(id)?.cancel();
+  tableQueues.delete(id);
+  const next = new Map(tables.value);
+  next.delete(id);
+  tables.value = next;
+}
+
+function setTableError(id: string, error: { path: string; message: string } | null): void {
+  const next = new Map(tableErrors.value);
+  if (error) next.set(id, error);
+  else next.delete(id);
+  tableErrors.value = next;
+}
+
+/** Apply what a schema write returned: the table, side effects, the card. */
+function applyWritten(w: TableWritten): void {
+  batch(() => {
+    if (w.table.deleted_at) removeTable(w.table.id);
+    else upsertTables([w.table]);
+    if (w.updated) upsertTables(w.updated);
+    if (w.item) takeOwn(w.item);
+    schemaVersion.value = Math.max(schemaVersion.value, w.schema_version);
+  });
+}
+
+/**
+ * Apply an item from the response to this tab's own request. Unlike remote
+ * changes, it applies while the item has focus (the button that caused it is
+ * usually inside it), unless the item has unsaved edits of its own.
+ */
+function takeOwn(i: Item): void {
+  const state = items.get(i.id);
+  if (!state) return upsertItems([i]);
+  if (queues.get(i.id)?.busy()) return;
+  state.item.value = i;
+}
+
+class TableQueue {
+  private pending: TablePatch | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private inFlight = false;
+
+  constructor(private readonly id: string) {}
+
+  busy(): boolean {
+    return this.inFlight || this.pending !== null;
+  }
+
+  push(patch: TablePatch, immediate: boolean): void {
+    this.pending = { ...(this.pending ?? {}), ...patch };
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.flush(), immediate ? 0 : SAVE_DELAY_MS);
+  }
+
+  cancel(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.pending = null;
+  }
+
+  private async flush(): Promise<void> {
+    this.timer = null;
+    const current = tables.value.get(this.id);
+    if (!current || this.inFlight || !this.pending) return;
+    const patch = this.pending;
+    this.pending = null;
+    this.inFlight = true;
+    try {
+      const w = await api.updateTable(this.id, { version: current.version, ...patch });
+      setTableError(this.id, null);
+      const later = this.pending as TablePatch | null;
+      this.inFlight = false;
+      if (later) {
+        // More edits arrived meanwhile: take the new version, keep them local.
+        const next = new Map(tables.value);
+        next.set(this.id, { ...w.table, ...later, definition: later.definition ?? w.table.definition });
+        tables.value = next;
+        if (w.updated) upsertTables(w.updated);
+        schemaVersion.value = Math.max(schemaVersion.value, w.schema_version);
+      } else {
+        applyWritten(w);
+      }
+    } catch (err) {
+      this.inFlight = false;
+      if (err instanceof ApiError && err.status === 422) {
+        // Keep the edit on screen and say what's wrong; the next edit retries.
+        setTableError(this.id, { path: err.body.path ?? "", message: err.body.message });
+      } else if (err instanceof ApiError && err.status === 409 && err.body.current) {
+        this.pending = null;
+        upsertTables([err.body.current as Table]);
+        setTableError(this.id, null);
+        status.value = { kind: "error", text: "That table was changed elsewhere, so it's been reloaded. Make your change again." };
+      } else if (err instanceof ApiError && err.status === 404) {
+        removeTable(this.id);
+      } else {
+        this.pending = { ...patch, ...(this.pending ?? {}) };
+        report(err, "save the table");
+      }
+    }
+    if (this.pending) void this.flush();
+  }
+}
+
+const tableQueues = new Map<string, TableQueue>();
+
+/** Change a table locally and save it (debounced). */
+export function editTable(id: string, patch: TablePatch, immediate = false): void {
+  const t = tables.value.get(id);
+  if (!t) return;
+  const next = new Map(tables.value);
+  next.set(id, { ...t, ...patch, definition: patch.definition ?? t.definition });
+  tables.value = next;
+  let queue = tableQueues.get(id);
+  if (!queue) {
+    queue = new TableQueue(id);
+    tableQueues.set(id, queue);
+  }
+  queue.push(patch, immediate);
+}
+
+/** Record a table edit for undo. Call when an edit ends, with the values from when it started. */
+export function rememberTable(id: string, before: TablePatch, after: TablePatch): void {
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  remember({ undo: [{ table: { id, patch: before } }], redo: [{ table: { id, patch: after } }] });
+}
+
+/** Create a table, optionally showing it on a schema card. Returns its id. */
+export async function createTable(
+  name: string,
+  definition: TableDefinition,
+  cardId?: string,
+): Promise<string | null> {
+  const b = board.value;
+  if (!b) return null;
+  try {
+    const w = await api.createTable(b.id, { name, definition, ...(cardId ? { item_id: cardId } : {}) });
+    applyWritten(w);
+    const id = w.table.id;
+    remember({
+      undo: [{ run: async () => applyWritten(await api.deleteTable(id, true)) }],
+      redo: [{ run: async () => applyWritten(await api.undeleteTable(id)) }],
+    });
+    return id;
+  } catch (err) {
+    report(err, "add the table");
+    return null;
+  }
+}
+
+/** Move a table to the trash. Asks first when other tables reference it. */
+export async function deleteTable(id: string): Promise<void> {
+  const t = tables.value.get(id);
+  if (!t) return;
+  tableQueues.get(id)?.cancel();
+  try {
+    let w: TableWritten;
+    try {
+      w = await api.deleteTable(id, false);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.body.error === "table_referenced")) throw err;
+      if (!confirm(`${err.body.message}\n\nDelete ${t.name} and remove those references?`)) return;
+      w = await api.deleteTable(id, true);
+    }
+    applyWritten(w);
+    remember({
+      undo: [{ run: async () => applyWritten(await api.undeleteTable(id)) }],
+      redo: [{ run: async () => applyWritten(await api.deleteTable(id, true)) }],
+    });
+    status.value = { kind: "info", text: `Moved ${t.name} to the trash.` };
+  } catch (err) {
+    report(err, "delete the table");
+  }
+}
+
+export async function restoreTable(id: string): Promise<boolean> {
+  try {
+    applyWritten(await api.undeleteTable(id));
+    return true;
+  } catch (err) {
+    report(err, "restore the table");
+    return false;
+  }
+}
+
+/** The schema cards that show a table. */
+export function cardsShowing(tableId: string): Item[] {
+  return itemIds.value
+    .map((id) => items.get(id)?.item.value)
+    .filter(
+      (i): i is Item =>
+        !!i && i.card_type === "schema" && ((i.content as { table_ids?: string[] }).table_ids ?? []).includes(tableId),
+    );
+}
+
+/** Show or hide tables on a schema card, as one undoable step. */
+export function setCardTables(cardId: string, tableIds: string[]): void {
+  const card = item(cardId);
+  if (!card) return;
+  const before = { content: card.content };
+  const after = { content: { table_ids: tableIds } };
+  editContent(cardId, after, true);
+  rememberEdit(cardId, before, after);
 }

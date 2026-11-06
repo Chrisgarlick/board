@@ -108,19 +108,18 @@ fn image(bytes: std::sync::Arc<Vec<u8>>, format: Format, filename: &str) -> Resp
 /// Render one item (a frame with its contents, or anything else alone).
 async fn render_item(state: &AppState, id: &str, req: Request) -> AppResult<Response> {
     let mut conn = state.pool.acquire().await?;
-    let (frame, items, connectors) = render::scene(&mut conn, id).await?;
+    let scene = render::scene(&mut conn, id).await?;
     drop(conn);
-    let name = frame
+    let name = scene
+        .frame
         .as_ref()
         .and_then(|f| f.title.clone())
-        .or_else(|| items.first().and_then(|i| i.title.clone()))
+        .or_else(|| scene.items.first().and_then(|i| i.title.clone()))
         .unwrap_or_else(|| "board".into());
     let cache = state.renders.clone();
-    let bytes = tokio::task::spawn_blocking(move || {
-        render::draw(&cache, frame.as_ref(), &items, &connectors, req)
-    })
-    .await
-    .map_err(|e| AppError::Internal(e.into()))??;
+    let bytes = tokio::task::spawn_blocking(move || render::draw(&cache, &scene, req))
+        .await
+        .map_err(|e| AppError::Internal(e.into()))??;
     Ok(image(bytes, req.format, &name))
 }
 
@@ -173,13 +172,12 @@ pub async fn selection(
     }
     .request(format)?;
     let mut conn = state.pool.acquire().await?;
-    let (items, connectors) = render::selection(&mut conn, &board_id, &body.item_ids).await?;
+    let scene = render::selection(&mut conn, &board_id, &body.item_ids).await?;
     drop(conn);
     let cache = state.renders.clone();
-    let bytes =
-        tokio::task::spawn_blocking(move || render::draw(&cache, None, &items, &connectors, req))
-            .await
-            .map_err(|e| AppError::Internal(e.into()))??;
+    let bytes = tokio::task::spawn_blocking(move || render::draw(&cache, &scene, req))
+        .await
+        .map_err(|e| AppError::Internal(e.into()))??;
     Ok(image(bytes, format, "selection"))
 }
 

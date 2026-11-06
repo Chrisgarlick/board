@@ -1,7 +1,7 @@
 # Planning Board: Technical Spec (Rust)
 
 Working name: **Board** (rename freely).
-Status: draft v0.6. Section 16 lists what changed in each version. The build order lives in `plan.md`.
+Status: draft v0.7. Section 16 lists what changed in each version. The build order lives in `plan.md`.
 
 ---
 
@@ -538,11 +538,16 @@ The stack is chosen per job, so the schema doesn't target a database. Columns us
 - Ids: tables `tbl_<ulid>`, columns `col_<ulid>`, pages `pg_<ulid>`. The server assigns ids to new items; clients send ids back for existing ones.
 - REST and MCP accept references by name on input, and the server resolves them to ids on write: `"references": { "table": "users", "column": "id" }`, feature `"tables": ["orders"]`, feature `"pages": ["/booking"]` and shape `"page": "/login"` (by slug), schema card `"tables": ["users", "orders"]`. Responses always return ids and names together. Claude never has to handle ULIDs by hand.
 - When a table definition is updated, a column without an `id` whose `name` matches an existing column keeps that column's id. A rename must carry the id. Sitemap nodes work the same way, matched by slug. Field provenance in Design depends on ids surviving edits, so this rule matters.
+- Clients may also mint ids for new entries (`col_`/`pg_` plus a ULID). The server keeps any well-formed id that isn't used by another table's column or another sitemap's page; the UI does this so an entry has one id from its first keystroke.
+- A reference may leave out the column: `{ "table": "users" }` means the table's primary key (an error if the key is composite).
+- Table and column names are unique ignoring case, and at most 64 characters.
 
 #### Deleting tables
 
 - Deleting a table that other tables reference is refused with a list of the referencing columns, unless `force` is given, in which case those `references` are removed in the same transaction (one schema change, undoable via revisions and the trash).
-- Schema cards and feature cards keep the ids of deleted tables but hide them on read; undeleting the table brings them back.
+- Schema cards and feature cards keep the ids of deleted tables in their content; readers (the UI, the renderer, the ER endpoint, the board model) skip ids that aren't live tables. Undeleting the table brings it back on those cards. Filtering on read was rejected: a client saving back what it read would drop the ids for good.
+- Undeleting a table is refused (409) while its name is taken by a live table, or while a table it references is still in the trash.
+- Removing a column that another table references is refused (422) until that reference is changed.
 
 ### 5.5 Validation
 
@@ -632,7 +637,9 @@ The UI uses batches for multi-select moves, paste, duplicate, align and group un
 | POST | `/api/tables/{id}/undelete` | Restore from trash |
 | GET | `/api/tables/{id}/revisions` | List revisions |
 | POST | `/api/tables/{id}/restore/{rev}` | Restore a revision |
-| GET | `/api/items/{id}/er` | Mermaid `erDiagram` source for a schema card's tables, for the UI to render |
+| GET | `/api/items/{id}/er` | Mermaid `erDiagram` source for a schema card's tables, plus the tables shown and the stubs. The UI's preview is the server-rendered SVG (`render.svg`), so the browser doesn't need Mermaid |
+
+Table writes return `{ table, schema_version, warnings?, updated?, item? }`: `updated` lists tables changed as a side effect (references removed by a forced delete), `item` the schema card a new table was added to.
 
 ### Design and export
 
@@ -1105,13 +1112,18 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 4. ~~Frontend framework?~~ **Decided:** Preact with signals (see the stack table in section 2).
 5. ~~Which MCP clients?~~ **Decided:** Claude Code only for now, with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector would mean adding OAuth to `/mcp`; revisit when needed.
 6. ~~Fonts?~~ **Decided:** Inter for every export in v1. A brand font per board can be added later; every export path would need to honour it.
-7. One schema per board assumes one board per job. If you want several independent schemas on one board (for example, comparing two designs of the same data), tables would gain a `schema_id` and schema cards would belong to one schema. Easy now, harder after M5, so decide before then.
+7. ~~One schema per board?~~ **Decided:** one schema per board, as specced. Several schemas on one board (for example, comparing two designs of the same data) would mean tables gaining a `schema_id` and schema cards belonging to one schema; revisit after real use.
 8. What is Design built in? If Rust, it uses the `board-model` crate; otherwise it generates types from the JSON Schema.
 9. ~~Shape set and nested frames?~~ **Decided:** the shape set as specced, and no nested frames in v1. Adding nesting later means one migration (rebuild `items` without the `frame_id` CHECK, since SQLite can't drop a constraint in place) and changing membership to the innermost containing frame.
 
 ---
 
 ## 16. Changes
+
+### v0.7
+
+- **Decided:** one schema per board (Q7).
+- **Schema details from building it:** trashed tables' ids stay in card content and readers skip them; client-minted ids accepted; a reference without a column means the primary key; names unique ignoring case, 64 characters at most; removing a referenced column refused; undelete rules; the shape of table write responses; the UI's ER preview is the server's SVG.
 
 ### v0.6
 

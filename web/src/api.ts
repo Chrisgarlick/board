@@ -1,7 +1,17 @@
 // The REST API client. Every request carries a per-tab client id, so that
 // from phase 3 the server can tag live updates with who caused them.
 
-import type { Board, BoardSummary, Connector, FullBoard, Item, Revision } from "./types";
+import type {
+  Board,
+  BoardSummary,
+  Connector,
+  FullBoard,
+  Item,
+  Revision,
+  Table,
+  TableDefinition,
+  TableWritten,
+} from "./types";
 
 /** This tab's id. Live updates carry it back so the tab can skip its own changes. */
 export const CLIENT_ID = crypto.randomUUID();
@@ -116,11 +126,12 @@ export const api = {
       `/boards?archived=${archived}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
     ),
   createBoard: (title: string) => request<Board>("POST", "/boards", { title }),
-  updateBoard: (id: string, patch: Partial<Pick<Board, "title" | "archived">>) =>
+  updateBoard: (id: string, patch: Partial<Pick<Board, "title" | "archived" | "description" | "stack">>) =>
     request<Board>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => request<void>("DELETE", `/boards/${id}`),
   getBoard: (id: string) => request<FullBoard>("GET", `/boards/${id}`),
-  trash: (id: string) => request<{ items: Item[]; connectors: Connector[] }>("GET", `/boards/${id}/trash`),
+  trash: (id: string) =>
+    request<{ items: Item[]; connectors: Connector[]; tables: Table[] }>("GET", `/boards/${id}/trash`),
   batch: (boardId: string, ops: Op[]) => request<BatchResult>("POST", `/boards/${boardId}/batch`, { ops }),
 
   createItem: (boardId: string, item: Record<string, unknown>) =>
@@ -134,4 +145,12 @@ export const api = {
     request<{ url: string; expires_at: string }>("POST", `/items/${id}/image-url`, { format }),
   restoreRevision: (id: string, rev: number, version: number) =>
     request<Item>("POST", `/items/${id}/restore/${rev}`, { version }),
+
+  createTable: (boardId: string, body: { name: string; definition: TableDefinition; item_id?: string }) =>
+    request<TableWritten>("POST", `/boards/${boardId}/tables`, body),
+  updateTable: (id: string, patch: { version: number; name?: string; definition?: TableDefinition }) =>
+    request<TableWritten>("PATCH", `/tables/${id}`, patch),
+  deleteTable: (id: string, force: boolean) =>
+    request<TableWritten>("DELETE", `/tables/${id}${force ? "?force=1" : ""}`),
+  undeleteTable: (id: string) => request<TableWritten>("POST", `/tables/${id}/undelete`),
 };

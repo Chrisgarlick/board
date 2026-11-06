@@ -2,8 +2,21 @@
 // paste events (no clipboard permission prompt), so it works across tabs and
 // boards. The clipboard holds plain JSON with a marker prefix.
 
-import type { Item } from "../types";
-import { connectors, create, item, membersOf, remove, select, selection, type NewConnector, type NewItem } from "../store";
+import { pageId } from "../ids";
+import type { Item, SitemapNode } from "../types";
+import {
+  board,
+  connectors,
+  create,
+  item,
+  membersOf,
+  remove,
+  select,
+  selection,
+  tables,
+  type NewConnector,
+  type NewItem,
+} from "../store";
 
 const MARKER = "board-clipboard/1:";
 const PASTE_OFFSET = 20;
@@ -11,6 +24,9 @@ const PASTE_OFFSET = 20;
 interface Clip {
   items: (NewItem & { ref: string })[];
   connectors: NewConnector[];
+  /** The board it was copied from, and its table names, for pasting elsewhere. */
+  board?: string;
+  tableNames?: Record<string, string>;
 }
 
 /** The selection (plus frame contents) and the connectors between them. */
@@ -44,7 +60,39 @@ function collect(): Clip | null {
       });
     }
   }
-  return { items, connectors: conns };
+  const tableNames: Record<string, string> = {};
+  for (const t of tables.value.values()) tableNames[t.id] = t.name;
+  return { items, connectors: conns, ...(board.value ? { board: board.value.id } : {}), tableNames };
+}
+
+/** A sitemap tree with new page ids, so a copy doesn't claim the original's pages. */
+function freshPages(node: SitemapNode): SitemapNode {
+  return { ...node, id: pageId(), children: (node.children ?? []).map(freshPages) };
+}
+
+/**
+ * Content as it should be pasted here. Page ids are always new. On another
+ * board, page links are dropped and schema cards keep the tables that exist
+ * there (by name), since ids from the other board mean nothing here.
+ */
+function adapt(n: NewItem, clip: Clip): NewItem {
+  const elsewhere = clip.board !== undefined && clip.board !== board.value?.id;
+  if (n.card_type === "sitemap") {
+    const c = n.content as { root: SitemapNode };
+    return { ...n, content: { root: freshPages(c.root) } };
+  }
+  if (!elsewhere) return n;
+  if (n.kind === "shape") {
+    const { page_id: _gone, ...rest } = n.content as { page_id?: string };
+    return { ...n, content: rest };
+  }
+  if (n.card_type === "schema") {
+    const here = new Set([...tables.value.values()].map((t) => t.name.toLowerCase()));
+    const ids = (n.content as { table_ids?: string[] }).table_ids ?? [];
+    const names = ids.map((id) => clip.tableNames?.[id]).filter((name): name is string => !!name && here.has(name.toLowerCase()));
+    return { ...n, content: { tables: names } };
+  }
+  return n;
 }
 
 let pasteCount = 0;
@@ -53,7 +101,7 @@ let pasteCount = 0;
 async function insert(clip: Clip, offset: number): Promise<void> {
   // Refs are the original ids; the batch maps them to the new ones.
   const created = await create(
-    clip.items.map((n) => ({ ...n, x: n.x + offset, y: n.y + offset })),
+    clip.items.map((n) => ({ ...adapt(n, clip), x: n.x + offset, y: n.y + offset })),
     clip.connectors,
   );
   if (created.length) select(created);

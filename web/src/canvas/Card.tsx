@@ -14,10 +14,14 @@ import {
   takeTheirs,
   type ItemState,
 } from "../store";
-import type { ChecklistContent, NoteContent } from "../types";
+import type { ChecklistContent, NoteContent, SitemapContent } from "../types";
 import { ChecklistBody } from "./ChecklistBody";
 import { liveRect, moving, pressItem, pressResize } from "./interact";
 import { NoteBody } from "./NoteBody";
+import { SchemaBody } from "./SchemaBody";
+import { SitemapBody } from "./SitemapBody";
+
+const LABELS = { note: "Note", checklist: "Checklist", schema: "Schema", sitemap: "Sitemap" } as const;
 
 const MIN_W = 180;
 const MIN_H = 120;
@@ -30,12 +34,12 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
   const lifted = moving.value.has(item.id);
   const editingTitle = editingId.value === item.id;
   const title = item.title ?? "";
-  const label = item.card_type === "note" ? "Note" : "Checklist";
+  const label = LABELS[item.card_type ?? "note"];
   const color = item.style?.color ? ` c-${item.style.color}` : "";
 
   return (
     <article
-      class={`item card${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${far ? " is-far" : ""}${item.locked ? " is-locked" : ""}${fresh.value.has(item.id) ? " is-fresh" : ""}`}
+      class={`item card card-${item.card_type ?? "note"}${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${far ? " is-far" : ""}${item.locked ? " is-locked" : ""}${fresh.value.has(item.id) ? " is-fresh" : ""}`}
       data-item={item.id}
       style={{ left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }}
       aria-label={`${label}: ${title || "untitled"}`}
@@ -60,6 +64,9 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
             {title || <span class="placeholder">Untitled</span>}
           </h2>
         )}
+        {item.card_type === "schema" || item.card_type === "sitemap" ? (
+          <span class="card-kind">{label}</span>
+        ) : null}
         <span class="card-meta" aria-live="polite">
           {state.saving.value ? "Saving" : ""}
         </span>
@@ -96,6 +103,10 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
         <div class="card-body">
           {item.card_type === "note" ? (
             <NoteBody id={item.id} content={item.content as NoteContent} />
+          ) : item.card_type === "schema" ? (
+            <SchemaBody item={item} />
+          ) : item.card_type === "sitemap" ? (
+            <SitemapBody id={item.id} content={item.content as SitemapContent} />
           ) : (
             <ChecklistBody id={item.id} content={item.content as ChecklistContent} />
           )}

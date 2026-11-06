@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod images;
+pub mod schema;
 
 use crate::app::AppState;
 use crate::auth;
@@ -25,7 +26,7 @@ use crate::service::connectors::{self, ConnectorPatch, NewConnector};
 use crate::service::flows::{self, FlowRequest};
 use crate::service::items::{self, Geometry, ItemPatch, NewItem};
 use crate::service::moves::{self, MoveRequest};
-use crate::service::search;
+use crate::service::{search, tables};
 use crate::types::{Caller, Ctx};
 
 const DEFAULT_BODY_LIMIT: usize = 1024 * 1024;
@@ -70,6 +71,18 @@ pub fn api(state: AppState) -> Router<AppState> {
             patch(update_connector).delete(delete_connector),
         )
         .route("/connectors/{id}/undelete", post(undelete_connector))
+        .route("/boards/{id}/schema", get(schema::get_schema))
+        .route("/boards/{id}/tables", post(schema::create_table))
+        .route(
+            "/tables/{id}",
+            get(schema::get_table)
+                .patch(schema::update_table)
+                .delete(schema::delete_table),
+        )
+        .route("/tables/{id}/undelete", post(schema::undelete_table))
+        .route("/tables/{id}/revisions", get(schema::table_revisions))
+        .route("/tables/{id}/restore/{rev}", post(schema::restore_table))
+        .route("/items/{id}/er", get(schema::item_er))
         .route("/search", get(search_items))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
@@ -91,7 +104,7 @@ pub fn ctx(state: &AppState, caller: Caller) -> Ctx {
 }
 
 /// The caller's `X-Client-Id`, used to tag live updates with who caused them.
-fn origin(headers: &HeaderMap) -> Option<String> {
+pub fn origin(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-client-id")
         .and_then(|v| v.to_str().ok())
@@ -268,8 +281,9 @@ async fn trash(State(state): State<AppState>, Path(id): Path<String>) -> AppResu
     boards::require_exists(&mut conn, &id).await?;
     let items = items::list_trash(&mut conn, &id).await?;
     let connectors = connectors::list_trash(&mut conn, &id).await?;
+    let tables = tables::list_trash(&mut conn, &id).await?;
     Ok(Json(
-        json!({ "items": items, "connectors": connectors, "tables": [] }),
+        json!({ "items": items, "connectors": connectors, "tables": tables }),
     ))
 }
 

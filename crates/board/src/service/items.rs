@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqliteConnection;
 
-use crate::content::{self, CardType, Kind};
+use crate::content::{self, CardType, Kind, PageRef, Refs};
 use crate::error::{AppError, AppResult};
 use crate::service::placement::{self, Rect};
-use crate::service::{boards, frames, search};
+use crate::service::{boards, frames, search, tables};
 use crate::types::{Ctx, new_id};
 
 /// Revisions by the same actor within this window are merged (spec 4.3).
@@ -179,6 +179,56 @@ pub async fn board_of(conn: &mut SqliteConnection, id: &str) -> AppResult<String
         .ok_or(AppError::NotFound("item"))
 }
 
+/// What an item's content may refer to, loaded only for the kinds that
+/// refer to anything (schema cards, sitemap cards and shapes).
+async fn refs(
+    conn: &mut SqliteConnection,
+    board_id: &str,
+    kind: Kind,
+    card_type: Option<CardType>,
+    item_id: Option<&str>,
+    current: Option<Value>,
+) -> AppResult<Refs> {
+    let mut refs = Refs {
+        item_id: item_id.map(str::to_string),
+        current,
+        ..Refs::default()
+    };
+    if card_type == Some(CardType::Schema) {
+        refs.tables = tables::names(conn, board_id).await?;
+    }
+    if kind == Kind::Shape || card_type == Some(CardType::Sitemap) {
+        refs.pages = pages(conn, board_id).await?;
+    }
+    Ok(refs)
+}
+
+/// Every page on a board's live sitemap cards, in card order.
+pub async fn pages(conn: &mut SqliteConnection, board_id: &str) -> AppResult<Vec<PageRef>> {
+    let cards: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, content FROM items
+         WHERE board_id = ? AND card_type = 'sitemap' AND deleted_at IS NULL ORDER BY y, x, id",
+    )
+    .bind(board_id)
+    .fetch_all(conn)
+    .await?;
+    let mut pages = Vec::new();
+    for (item_id, content) in cards {
+        let Ok(c) = serde_json::from_str::<content::SitemapContent>(&content) else {
+            continue;
+        };
+        for p in c.root.walk() {
+            pages.push(PageRef {
+                id: p.id.clone(),
+                slug: p.slug.clone(),
+                title: p.title.clone(),
+                item_id: item_id.clone(),
+            });
+        }
+    }
+    Ok(pages)
+}
+
 // ---------- Create ----------
 
 #[derive(Debug, Clone, Deserialize)]
@@ -217,12 +267,14 @@ pub async fn create(
 
     let kind = Kind::parse(&new.kind)?;
     let card_type = new.card_type.as_deref().map(CardType::parse).transpose()?;
+    let refs = refs(conn, board_id, kind, card_type, None, None).await?;
     let valid = content::validate(
         kind,
         card_type,
         new.title.as_deref(),
         &new.content,
         new.style.as_ref(),
+        &refs,
     )?;
 
     let (default_w, default_h) = valid.default_size;
@@ -414,12 +466,28 @@ pub async fn update(
         .map_err(|e| AppError::Internal(e.into()))?;
 
     let title = patch.title.or(current.title.clone());
+    let refs = refs(
+        conn,
+        &current.board_id,
+        kind,
+        card_type,
+        Some(id),
+        Some(current_content.clone()),
+    )
+    .await?;
     let content = patch.content.unwrap_or(current_content);
     let style = match patch.style {
         Some(style) => style,
         None => current_style,
     };
-    let valid = content::validate(kind, card_type, title.as_deref(), &content, style.as_ref())?;
+    let valid = content::validate(
+        kind,
+        card_type,
+        title.as_deref(),
+        &content,
+        style.as_ref(),
+        &refs,
+    )?;
 
     // Nothing changed: don't bump the version or write a revision.
     if valid.title == current.title
@@ -650,7 +718,16 @@ pub async fn undelete(
         .transpose()?;
     let content: Value =
         serde_json::from_str(&current.content).map_err(|e| AppError::Internal(e.into()))?;
-    let valid = content::validate(kind, card_type, current.title.as_deref(), &content, None)?;
+    let mut refs = refs(conn, &current.board_id, kind, card_type, Some(id), None).await?;
+    refs.trusted = true;
+    let valid = content::validate(
+        kind,
+        card_type,
+        current.title.as_deref(),
+        &content,
+        None,
+        &refs,
+    )?;
     search::index_item(
         conn,
         id,

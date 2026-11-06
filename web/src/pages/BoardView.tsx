@@ -12,7 +12,10 @@ import { addNext } from "../canvas/quickflow";
 import { StyleBar } from "../canvas/StyleBar";
 import { TOOL_KEYS, Toolbar } from "../canvas/Toolbar";
 import { HistoryPanel } from "../canvas/HistoryPanel";
+import { SchemaPanel } from "../canvas/SchemaPanel";
+import { SettingsPanel } from "../canvas/SettingsPanel";
 import { TrashPanel } from "../canvas/TrashPanel";
+import { pageId } from "../ids";
 import { listen } from "../live";
 import { clampZoom, fit, panBy, toCanvas, view, zoomAt } from "../canvas/viewport";
 import { navigate } from "../router";
@@ -51,7 +54,8 @@ const NUDGE_BIG = 10;
 
 export function BoardView({ id }: { id: string }) {
   const [state, setState] = useState<Load>({ kind: "loading" });
-  const [trashOpen, setTrashOpen] = useState(false);
+  const [panel, setPanel] = useState<"trash" | "schema" | "settings" | null>(null);
+  const toggle = (p: "trash" | "schema" | "settings") => setPanel(panel === p ? null : p);
   const [adding, setAdding] = useState<{ sx: number; sy: number; x: number; y: number } | null>(null);
   const mat = useRef<HTMLDivElement>(null);
   const spaceDown = useRef(false);
@@ -63,7 +67,7 @@ export function BoardView({ id }: { id: string }) {
       .getBoard(id)
       .then((full) => {
         if (cancelled) return;
-        load(full.board, full.items, full.connectors);
+        load(full.board, full.items, full.connectors, full.tables);
         setState({ kind: "ready" });
         document.title = `${full.board.title} – Board`;
         requestAnimationFrame(() => fitTo(allItems()));
@@ -240,11 +244,15 @@ export function BoardView({ id }: { id: string }) {
 
   async function addFromMenu(kind: string, at: { x: number; y: number }) {
     setAdding(null);
-    if (kind === "note" || kind === "checklist") {
-      const content = kind === "note" ? { markdown: "" } : { items: [{ text: "", done: false }] };
-      const [created] = await create([
-        { kind: "card", card_type: kind, title: kind === "note" ? "Note" : "Checklist", content, x: at.x, y: at.y },
-      ]);
+    const cards: Record<string, { title: string; content: unknown }> = {
+      note: { title: "Note", content: { markdown: "" } },
+      checklist: { title: "Checklist", content: { items: [{ text: "", done: false }] } },
+      schema: { title: "Data model", content: { table_ids: [] } },
+      sitemap: { title: "Sitemap", content: { root: { id: pageId(), title: "Home", slug: "/" } } },
+    };
+    const card = cards[kind];
+    if (card) {
+      const [created] = await create([{ kind: "card", card_type: kind, ...card, x: at.x, y: at.y }]);
       if (created) select([created]);
       return;
     }
@@ -305,14 +313,23 @@ export function BoardView({ id }: { id: string }) {
             +
           </button>
         </div>
-        <button
-          type="button"
-          class={`text-button${trashOpen ? " is-active" : ""}`}
-          aria-pressed={trashOpen}
-          onClick={() => setTrashOpen(!trashOpen)}
-        >
-          Trash
-        </button>
+        {(
+          [
+            ["schema", "Schema"],
+            ["settings", "Settings"],
+            ["trash", "Trash"],
+          ] as const
+        ).map(([p, label]) => (
+          <button
+            key={p}
+            type="button"
+            class={`text-button${panel === p ? " is-active" : ""}`}
+            aria-pressed={panel === p}
+            onClick={() => toggle(p)}
+          >
+            {label}
+          </button>
+        ))}
       </header>
 
       <div
@@ -366,7 +383,7 @@ export function BoardView({ id }: { id: string }) {
 
         {itemIds.value.length + frameIds.value.length === 0 && !adding && (
           <p class="mat-hint">
-            Pick a tool on the left, or double-click anywhere to add a note, checklist, sticky or shape.
+            Pick a tool on the left, or double-click anywhere to add a note, checklist, schema, sitemap, sticky or shape.
           </p>
         )}
 
@@ -381,6 +398,8 @@ export function BoardView({ id }: { id: string }) {
               [
                 ["note", "Note"],
                 ["checklist", "Checklist"],
+                ["schema", "Schema (tables)"],
+                ["sitemap", "Sitemap"],
                 ["sticky", "Sticky note"],
                 ["rect", "Process step"],
                 ["text", "Text"],
@@ -402,8 +421,10 @@ export function BoardView({ id }: { id: string }) {
         )}
       </div>
 
-      {trashOpen && b && <TrashPanel boardId={b.id} onClose={() => setTrashOpen(false)} />}
-      {historyFor.value && !trashOpen && <HistoryPanel id={historyFor.value} />}
+      {panel === "trash" && b && <TrashPanel boardId={b.id} onClose={() => setPanel(null)} />}
+      {panel === "schema" && <SchemaPanel onClose={() => setPanel(null)} />}
+      {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
+      {historyFor.value && !panel && <HistoryPanel id={historyFor.value} />}
     </div>
   );
 }

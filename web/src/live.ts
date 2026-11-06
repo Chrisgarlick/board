@@ -19,6 +19,10 @@ const CHANGE_EVENTS = [
   "connector.deleted",
   "board.updated",
   "board.deleted",
+  "table.created",
+  "table.updated",
+  "table.deleted",
+  "table.undeleted",
 ];
 
 /** Start listening to a board. Returns a function that stops. */

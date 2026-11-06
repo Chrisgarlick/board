@@ -1,7 +1,6 @@
 //! Boards: a flat list for v1 (spec section 15, question 3).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::SqliteConnection;
 
 use crate::content::MAX_TITLE_CHARS;
@@ -9,6 +8,7 @@ use crate::error::{AppError, AppResult};
 use crate::service::connectors::{self, Connector};
 use crate::service::items::{self, Item};
 use crate::service::search;
+use crate::service::tables::{self, Table};
 use crate::types::{Ctx, new_id};
 
 const MAX_DESCRIPTION_CHARS: usize = 2_000;
@@ -32,6 +32,7 @@ pub struct BoardSummary {
     #[serde(flatten)]
     pub board: Board,
     pub item_count: i64,
+    pub table_count: i64,
 }
 
 /// A board with everything on it, for the canvas.
@@ -40,8 +41,8 @@ pub struct FullBoard {
     pub board: Board,
     pub items: Vec<Item>,
     pub connectors: Vec<Connector>,
-    /// Arrive in phase 5.
-    pub tables: Vec<Value>,
+    /// The board schema: every live table, by name.
+    pub tables: Vec<Table>,
 }
 
 const COLS: &str = "b.id, b.title, b.description, b.stack, b.schema_version, b.archived, b.created_at, b.updated_at";
@@ -57,7 +58,8 @@ pub async fn list(
         .map(|q| format!("%{}%", escape_like(q)));
     let sql = format!(
         "SELECT {COLS},
-                (SELECT count(*) FROM items i WHERE i.board_id = b.id AND i.deleted_at IS NULL) AS item_count
+                (SELECT count(*) FROM items i WHERE i.board_id = b.id AND i.deleted_at IS NULL) AS item_count,
+                (SELECT count(*) FROM schema_tables t WHERE t.board_id = b.id AND t.deleted_at IS NULL) AS table_count
          FROM boards b
          WHERE b.archived = ?1 AND (?2 IS NULL OR b.title LIKE ?2 ESCAPE '\\')
          ORDER BY b.updated_at DESC"
@@ -88,11 +90,12 @@ pub async fn get_full(conn: &mut SqliteConnection, id: &str) -> AppResult<FullBo
     let board = get(conn, id).await?;
     let items = items::list_live(conn, id).await?;
     let connectors = connectors::list_live(conn, id).await?;
+    let tables = tables::list_live(conn, id).await?;
     Ok(FullBoard {
         board,
         items,
         connectors,
-        tables: Vec::new(),
+        tables,
     })
 }
 

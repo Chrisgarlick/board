@@ -45,7 +45,8 @@ Browser tests (Playwright, kept out of the normal checks so they never download 
 
 ```sh
 (cd e2e && npm install && npx playwright install chromium)   # once
-./scripts/e2e.sh
+./scripts/e2e.sh                      # every suite
+./scripts/e2e.sh e2e/schema.mjs       # just one
 ```
 
 ## Running it
