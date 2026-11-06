@@ -76,11 +76,11 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 
 ### Deploy
 
-Files and instructions are ready in `deploy/` (`deploy/README.md` walks through every step). These steps run on your droplet:
+Board runs on the Kritano droplet next to Motion (`deploy/README.md`); `deploy/deploy.sh` builds and installs it.
 
-- [ ] Release build; systemd unit (`deploy/board.service`); Caddy with TLS in front (`deploy/Caddyfile`); bind to localhost only.
-- [ ] Create your login with `board login`; create a `laptop` admin token for scripts.
-- [ ] Nightly `scripts/backup.sh` via cron, copied off the droplet, 14 days kept. Do a test restore once. (The backup and restore round trip is tested locally.)
+- [x] Release build (GitHub Actions, static musl binary); systemd unit; nginx with certbot TLS at `https://board.kritano.com`; bound to localhost only. Deployed 2026-11-06.
+- [ ] Create your login with `board login`; create a `laptop` admin token for scripts (yours: tokens are shown once).
+- [x] Nightly `scripts/backup.sh` via a systemd timer, 14 days kept on the droplet. Still yours: an off-droplet `BACKUP_REMOTE`, and one test restore.
 
 **Status:** code done (2026-11-06); deploy is yours to run. Also added beyond the list:
 
