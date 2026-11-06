@@ -1,0 +1,10 @@
+[package]
+name = "typeset-doc"
+description = "Typeset document contract. Temporary home: moves to the Typeset repo (spec section 2)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true

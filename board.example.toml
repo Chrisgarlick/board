@@ -1,0 +1,19 @@
+# Board configuration. Copy to board.toml, or just run `board serve` and a
+# board.toml with these defaults and a fresh server_secret is created for you.
+
+# Address to listen on. Keep it on localhost; put Caddy/nginx with TLS in front.
+bind = "127.0.0.1:7070"
+
+# SQLite database file.
+database = "board.db"
+
+# The public origin Board is served from. Used for the Origin check on writes
+# and for building signed export and image URLs. No trailing slash.
+public_origin = "http://localhost:7070"
+
+# 32+ random bytes, base64url. Signs export and image URLs; rotating it
+# invalidates every outstanding signed URL. Generated on first run if missing.
+# server_secret = "..."
+
+# Typeset base URL, for push-mode PDF exports (phase 7).
+# typeset_url = "https://typeset.example.com"

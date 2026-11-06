@@ -1,0 +1,32 @@
+name: CI
+
+# Manual only: the repo is private, so Actions minutes are limited. CI runs
+# locally instead (./scripts/ci.sh, and the pre-push hook in .githooks/).
+# To run it on every push again, add `push:` and `pull_request:` triggers.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Checks
+        run: ./scripts/ci.sh

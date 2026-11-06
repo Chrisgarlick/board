@@ -1,0 +1,10 @@
+[package]
+name = "board-model"
+description = "Board's published read contract: schema, sitemap, features, flows (spec section 9)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
