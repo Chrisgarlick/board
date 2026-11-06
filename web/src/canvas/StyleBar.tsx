@@ -3,16 +3,21 @@
 
 import { useLayoutEffect, useRef } from "preact/hooks";
 
+import { api, downloadImage } from "../api";
+
 import {
+  board,
   bottomZ,
   connectors,
   historyFor,
   place,
   remove,
+  report,
   reshape,
   restyle,
   selectedConnector,
   selectedItems,
+  status,
   topZ,
   updateConnector,
 } from "../store";
@@ -53,6 +58,8 @@ function bounds(list: Item[]) {
 
 /** Room to leave for the toolbar on the left of the canvas. */
 const TOOLBAR_CLEARANCE = 64;
+/** Height of a frame's title tab above the frame, in screen pixels. */
+const FRAME_TAB = 30;
 const EDGE = 8;
 
 export function StyleBar() {
@@ -67,7 +74,10 @@ function ItemBar() {
   const v = view.value;
   const b = list.length ? bounds(list) : { x: 0, y: 0, w: 0, h: 0 };
   const centre = b.x * v.zoom + v.x + (b.w * v.zoom) / 2;
-  const top = b.y * v.zoom + v.y;
+  // A frame's title tab sits above it; keep the bar clear of the tab so the
+  // frame can still be dragged by it.
+  const tab = list.some((i) => i.kind === "frame") ? FRAME_TAB : 0;
+  const top = b.y * v.zoom + v.y - tab;
   const bottom = (b.y + b.h) * v.zoom + v.y;
 
   // Keep the bar inside the canvas and clear of the toolbar; if there's no
@@ -157,10 +167,45 @@ function ItemBar() {
           History
         </button>
       )}
+      <ExportMenu ids={ids} name={first.title ?? (first.kind === "frame" ? "frame" : "selection")} />
       <button type="button" class="danger" title="Delete" onClick={() => void remove(ids)}>
         Delete
       </button>
     </div>
+  );
+}
+
+/** Download the selection as an image, or copy a link to one item's image. */
+function ExportMenu({ ids, name }: { ids: string[]; name: string }) {
+  async function run(choice: string) {
+    const b = board.value;
+    if (!b) return;
+    try {
+      if (choice === "png" || choice === "svg") {
+        await downloadImage(b.id, ids, choice, name);
+      } else if (choice === "link" && ids[0]) {
+        const { url } = await api.imageLink(ids[0], "png");
+        await navigator.clipboard.writeText(url);
+        status.value = { kind: "info", text: "Image link copied. It works for 7 days, without logging in." };
+      }
+    } catch (err) {
+      report(err, "export that");
+    }
+  }
+  return (
+    <select
+      aria-label="Export"
+      value=""
+      onChange={(e) => {
+        void run(e.currentTarget.value);
+        e.currentTarget.value = "";
+      }}
+    >
+      <option value="">Export</option>
+      <option value="png">Download PNG</option>
+      <option value="svg">Download SVG</option>
+      {ids.length === 1 && <option value="link">Copy image link</option>}
+    </select>
   );
 }
 

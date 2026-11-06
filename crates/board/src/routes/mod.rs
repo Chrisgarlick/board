@@ -12,6 +12,8 @@ use axum::{Extension, Json, Router, middleware};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod images;
+
 use crate::app::AppState;
 use crate::auth;
 use crate::db;
@@ -58,6 +60,10 @@ pub fn api(state: AppState) -> Router<AppState> {
         .route("/items/{id}/undelete", post(undelete_item))
         .route("/items/{id}/revisions", get(revisions))
         .route("/items/{id}/restore/{rev}", post(restore_revision))
+        .route("/items/{id}/render.svg", get(images::item_svg))
+        .route("/items/{id}/render.png", get(images::item_png))
+        .route("/items/{id}/image-url", post(images::create_link))
+        .route("/boards/{id}/render", post(images::selection))
         .route("/boards/{id}/connectors", post(create_connector))
         .route(
             "/connectors/{id}",
@@ -72,7 +78,9 @@ pub fn api(state: AppState) -> Router<AppState> {
 
 /// Routes outside `/api` that don't need a login.
 pub fn public() -> Router<AppState> {
-    Router::new().route("/login/{code}", get(login))
+    Router::new()
+        .route("/login/{code}", get(login))
+        .route("/i/{file}", get(images::public_image))
 }
 
 pub fn ctx(state: &AppState, caller: Caller) -> Ctx {

@@ -771,7 +771,7 @@ What it renders:
 | POST | `/api/boards/{id}/render` | Render a selection: `{ item_ids, format, scale?, theme? }` |
 | POST | `/api/items/{id}/image-url` | Mint a signed image URL (`format`, `scale`, `theme`; default lifetime 7 days, max 90) |
 
-Signed image URLs use the same HMAC scheme as Typeset URLs (3.3) and work without a token, so Design, Typeset or an email can fetch them. A signed URL renders the item as it is when fetched, not when signed; it's a link to the drawing, not a snapshot.
+Signed image URLs use the same HMAC scheme as Typeset URLs (3.3) and work without a token, so Design, Typeset or an email can fetch them. They look like `{public_origin}/i/{item_id}.png?scale=2&exp=…&sig=…`. A signed URL renders the item as it is when fetched, not when signed; it's a link to the drawing, not a snapshot. A tampered or unsigned link gets 403, an expired one 410, and one whose item has been deleted 404.
 
 ### 8.3 Typeset: entry points
 
@@ -1104,7 +1104,7 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 3. ~~Per-client folders or a flat list?~~ **Decided:** a flat list of boards with search for v1. Later, boards can be attached to a client: a `clients` table and a nullable `boards.client_id`, added by an additive migration, with a client filter on the board list.
 4. ~~Frontend framework?~~ **Decided:** Preact with signals (see the stack table in section 2).
 5. ~~Which MCP clients?~~ **Decided:** Claude Code only for now, with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector would mean adding OAuth to `/mcp`; revisit when needed.
-6. Fonts: exports use Inter by default. Should client PDFs use a brand font per board (configured on the board, loaded from a font file)? It's a small addition to the renderer, but every export path would need to honour it.
+6. ~~Fonts?~~ **Decided:** Inter for every export in v1. A brand font per board can be added later; every export path would need to honour it.
 7. One schema per board assumes one board per job. If you want several independent schemas on one board (for example, comparing two designs of the same data), tables would gain a `schema_id` and schema cards would belong to one schema. Easy now, harder after M5, so decide before then.
 8. What is Design built in? If Rust, it uses the `board-model` crate; otherwise it generates types from the JSON Schema.
 9. ~~Shape set and nested frames?~~ **Decided:** the shape set as specced, and no nested frames in v1. Adding nesting later means one migration (rebuild `items` without the `frame_id` CHECK, since SQLite can't drop a constraint in place) and changing membership to the innermost containing frame.

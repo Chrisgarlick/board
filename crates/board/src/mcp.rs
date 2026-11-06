@@ -15,11 +15,12 @@ use axum::http::request::Parts;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::{Extension as AxumExtension, Router};
+use base64::Engine as _;
 use chrono::TimeDelta;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -280,6 +281,15 @@ pub struct UpdateConnector {
 #[derive(Deserialize, JsonSchema)]
 pub struct ConnectorId {
     pub connector_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ItemImage {
+    /// A frame (drawn with everything in it) or any single item.
+    pub item_id: String,
+    /// Pixels per canvas unit, 1–4 (default 1, which is plenty to look at).
+    #[serde(default)]
+    pub scale: Option<f32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -731,6 +741,58 @@ impl BoardMcp {
             .await
             .map_err(fail)?;
         ok(json!({ "deleted": true }))
+    }
+
+    #[tool(
+        description = "See a frame (or any item) as an image: returns the PNG, plus a signed link (valid 7 days) you can share. Use it to check a flow you drew looks right."
+    )]
+    async fn get_item_image(
+        &self,
+        Parameters(p): Parameters<ItemImage>,
+    ) -> Result<CallToolResult, String> {
+        let mut conn = self.conn().await?;
+        let (frame, list, conns) = crate::render::scene(&mut conn, &p.item_id)
+            .await
+            .map_err(fail)?;
+        drop(conn);
+        let scale = p.scale.unwrap_or(1.0);
+        if !(1.0..=4.0).contains(&scale) {
+            return Err(fail(AppError::invalid("scale", "between 1 and 4")));
+        }
+        let req = crate::render::Request {
+            scale,
+            ..Default::default()
+        };
+        let cache = self.state.renders.clone();
+        let png = tokio::task::spawn_blocking(move || {
+            crate::render::draw(&cache, frame.as_ref(), &list, &conns, req)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(fail)?;
+        let link = crate::routes::images::image_link(
+            &self.state,
+            &p.item_id,
+            &crate::routes::images::LinkBody {
+                format: "png".into(),
+                scale: Some(2.0),
+                theme: None,
+                title: None,
+                days: None,
+            },
+        )
+        .map_err(fail)?;
+        Ok(CallToolResult::success(vec![
+            ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(png.as_ref()),
+                "image/png",
+            ),
+            ContentBlock::text(format!(
+                "Shareable link (expires {}): {}",
+                link["expires_at"].as_str().unwrap_or(""),
+                link["url"].as_str().unwrap_or("")
+            )),
+        ]))
     }
 
     #[tool(description = "An item's saved versions, newest first, with who made each.")]

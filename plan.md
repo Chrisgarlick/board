@@ -14,7 +14,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 | ~~Folders or a flat list~~ | Phase 1 | §15 Q3 | **Decided:** flat list with search; attaching boards to clients comes later |
 | ~~Shape set, nested frames~~ | Phase 2 | §15 Q9 | **Decided:** shape set as specced; no nesting in v1, can be added later |
 | ~~Which MCP clients~~ | Phase 3 | §15 Q5 | **Decided:** Claude Code only for now, with a static bearer token; OAuth for claude.ai / Desktop can be added later |
-| Default font, and whether boards get a brand font | Phase 4 | §15 Q6 | Recommendation: Inter only for v1 |
+| ~~Export font~~ | Phase 4 | §15 Q6 | **Decided:** Inter for every export in v1; brand fonts per board can come later |
 | One schema per board, or several | Phase 5 | §15 Q7 | Recommendation: one, as specced |
 | What Design is written in | Phase 6 | §15 Q8 | Rust → `board-model` crate; otherwise JSON Schema |
 | Typeset's actual input format | Phase 7 | §15 Q1 | **Blocks phase 7.** Send a real payload |
@@ -177,15 +177,23 @@ Files and instructions are ready in `deploy/` (`deploy/README.md` walks through 
 
 **Goal:** drawings leave Board as PNG and SVG files, made by Board itself.
 
-- [ ] Add `ttf-parser`, `usvg`, `resvg`, `tiny-skia`, `insta` (tests). Bundle Inter regular and semibold in `fonts/` with its licence.
-- [ ] `render/text.rs`: glyph advances, greedy wrapping, hard breaks for long words, step-down to a minimum size, then ellipsis (§8.1).
-- [ ] `render/routing.rs`: connector routing in Rust, passing the same `fixtures/routing.json` as the UI.
-- [ ] `render/svg.rs`: frame and selection → SVG (shapes, stickies, text, cards as titled boxes, connectors, labels, arrowheads), print and dark themes mapped from palette names, text-as-paths option via `usvg`.
-- [ ] `render/png.rs`: `resvg` at scale 1–4, external resources disabled, size and time limits (§11), in-memory LRU keyed by an input hash.
-- [ ] Endpoints (§8.2): `render.svg`, `render.png`, selection render, signed image URLs (same HMAC as §3.3, 7-day default).
-- [ ] MCP `get_item_image`: returns the PNG as image content plus a signed URL.
-- [ ] UI: Export as PNG / SVG / Copy image link on frames and selections.
-- [ ] Tests: SVG snapshots for a representative frame, wrapping edge cases, routing fixtures, PNG smoke test, and checking a signed URL with an expired or tampered signature fails.
+- [x] Add `ttf-parser`, `usvg`, `resvg`, `tiny-skia`, `insta` (tests). Bundle Inter regular and semibold in `fonts/` with its licence.
+- [x] `render/text.rs`: glyph advances, greedy wrapping, hard breaks for long words, step-down to a minimum size, then ellipsis (§8.1).
+- [x] `render/routing.rs`: connector routing in Rust, passing the same `fixtures/routing.json` as the UI.
+- [x] `render/svg.rs`: frame and selection → SVG (shapes, stickies, text, cards as titled boxes, connectors, labels, arrowheads), print and dark themes mapped from palette names, text-as-paths option via `usvg`.
+- [x] `render/png.rs`: `resvg` at scale 1–4, external resources disabled, size and time limits (§11), in-memory LRU keyed by an input hash.
+- [x] Endpoints (§8.2): `render.svg`, `render.png`, selection render, signed image URLs (same HMAC as §3.3, 7-day default).
+- [x] MCP `get_item_image`: returns the PNG as image content plus a signed URL.
+- [x] UI: Export as PNG / SVG / Copy image link on frames and selections.
+- [x] Tests: SVG snapshots for a representative frame, wrapping edge cases, routing fixtures, PNG smoke test, and checking a signed URL with an expired or tampered signature fails.
+
+**Status:** done (2026-11-06). Notes:
+
+- Inter 4.1 (Regular, SemiBold, Bold; OFL) is bundled in `crates/board/fonts/` and embedded in the binary. resvg is built without system fonts and without raster images, so renders match on every machine and an SVG can't load other files.
+- Exports use Inter; the canvas uses Atkinson Hyperlegible. Layout, routing and colours match; the typeface differs by design.
+- Signed links: `/i/{id}.png` and `/i/{id}.svg`, 7 days by default (1–90).
+- Fixed while testing: the wider style bar covered a selected frame's tab, so the frame couldn't be dragged by it.
+- Tests: render unit tests (text fitting, routing fixtures in Rust, a reviewed SVG snapshot, PNG size and limits), `tests/images.rs` (4), an MCP image check, and `e2e/export.mjs` (7 browser checks).
 
 **Done when:** you can export a flowchart frame as a PNG that matches what's on screen, paste its image link into an email, and Claude can call `get_item_image` and describe what it sees.
 

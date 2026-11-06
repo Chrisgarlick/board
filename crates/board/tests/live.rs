@@ -349,6 +349,19 @@ async fn claude_draws_a_flow_and_it_is_recorded_as_claude() {
 
     let found = mcp.ok("search", json!({ "query": "payment" })).await;
     assert_eq!(found[0]["board_title"], "Bakery site");
+
+    // Claude can look at what it drew.
+    mcp.next_id += 1;
+    let (_, body, _) = mcp
+        .raw(
+            json!({ "jsonrpc": "2.0", "id": mcp.next_id, "method": "tools/call",
+                     "params": { "name": "get_item_image", "arguments": { "item_id": frame } } }),
+        )
+        .await;
+    let content = &body["result"]["content"];
+    assert_eq!(content[0]["type"], "image", "{body}");
+    assert_eq!(content[0]["mimeType"], "image/png");
+    assert!(content[1]["text"].as_str().unwrap().contains("/i/"));
 }
 
 #[tokio::test]

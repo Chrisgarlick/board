@@ -54,6 +54,7 @@ impl TestApp {
             pool,
             clock: clock.clone(),
             hub: Default::default(),
+            renders: Default::default(),
         };
         let admin = auth::create_token(
             &state.pool,

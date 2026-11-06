@@ -115,6 +115,7 @@ async fn serve(config_path: &Path) -> Result<()> {
         pool,
         clock,
         hub: Default::default(),
+        renders: Default::default(),
     };
     let listener = tokio::net::TcpListener::bind(bind)
         .await

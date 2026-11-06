@@ -17,6 +17,11 @@ impl Timestamp {
         self.0.to_rfc3339_opts(SecondsFormat::Millis, true)
     }
 
+    /// Seconds since the Unix epoch.
+    pub fn unix(self) -> i64 {
+        self.0.timestamp()
+    }
+
     pub fn minus(self, delta: TimeDelta) -> Self {
         Self(self.0 - delta)
     }

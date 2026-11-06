@@ -11,6 +11,7 @@ use crate::assets;
 use crate::clock::Clock;
 use crate::config::Config;
 use crate::events::Hub;
+use crate::render;
 use crate::routes;
 
 /// State shared by every handler.
@@ -20,6 +21,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub clock: Arc<dyn Clock>,
     pub hub: Hub,
+    pub renders: render::Cache,
 }
 
 pub fn router(state: AppState) -> Router {

@@ -80,7 +80,7 @@ pub struct ConnectorStyle {
     pub color: Option<Color>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::FromRow)]
 pub struct Connector {
     pub id: String,
     pub board_id: String,

@@ -73,6 +73,39 @@ export interface Geometry {
   locked?: boolean;
 }
 
+/**
+ * Fetch a rendered image (spec 8.2) and save it: a single item (a frame with
+ * its contents) or a selection.
+ */
+export async function downloadImage(
+  boardId: string,
+  ids: string[],
+  format: "png" | "svg",
+  filename: string,
+): Promise<void> {
+  const one = ids.length === 1 ? ids[0] : undefined;
+  const res = one
+    ? await fetch(`/api/items/${one}/render.${format}`, { credentials: "same-origin" })
+    : await fetch(`/api/boards/${boardId}/render`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Client-Id": CLIENT_ID },
+        body: JSON.stringify({ item_ids: ids, format }),
+      });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ApiErrorBody | null;
+    throw new ApiError(res.status, body ?? { error: "http", message: `Export failed (${res.status})` });
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filename.replace(/[^\w-]+/g, "-") || "board"}.${format}`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export const api = {
   me: () => request<{ actor: string; scope: string }>("GET", "/me"),
   logout: () => request<void>("POST", "/logout"),
@@ -97,6 +130,8 @@ export const api = {
   deleteItem: (id: string) => request<void>("DELETE", `/items/${id}`),
   undeleteItem: (id: string) => request<Item>("POST", `/items/${id}/undelete`),
   revisions: (id: string) => request<{ revisions: Revision[] }>("GET", `/items/${id}/revisions`),
+  imageLink: (id: string, format: "png" | "svg") =>
+    request<{ url: string; expires_at: string }>("POST", `/items/${id}/image-url`, { format }),
   restoreRevision: (id: string, rev: number, version: number) =>
     request<Item>("POST", `/items/${id}/restore/${rev}`, { version }),
 };

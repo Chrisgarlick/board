@@ -57,7 +57,7 @@ struct Row {
 }
 
 /// An item as the API returns it.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Item {
     pub id: String,
     pub board_id: String,
