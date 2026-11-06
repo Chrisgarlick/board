@@ -1,85 +1,71 @@
 # Deploying Board
 
-One DigitalOcean droplet (Ubuntu), Board bound to localhost, Caddy in front
-for TLS. Replace `board.example.com` with your domain throughout.
+Board runs on the Kritano droplet (`167.71.134.177`) next to Clients and
+Motion: a systemd service on `127.0.0.1:7070`, data in `/var/lib/board`,
+nginx in front at `https://board.kritano.com` (certbot for TLS).
 
-## 1. Build
+| File | Goes to |
+|---|---|
+| `board` (built by the Release workflow) | `/usr/local/bin/board` |
+| `board.service`, `board-backup.service`, `board-backup.timer` | `/etc/systemd/system/` |
+| `board.kritano.com.conf` | `/etc/nginx/sites-available/board.kritano.com` (first time only) |
+| `../scripts/backup.sh` | `/usr/local/bin/board-backup.sh` |
+| (made on first install) | `/var/lib/board/board.toml` |
 
-On the droplet (or any Linux x86_64 machine with Rust and Node 22):
+## Deploy (first time and every update)
 
-```sh
-git clone https://github.com/Chrisgarlick/board.git && cd board
-(cd web && npm ci && npm run build)
-cargo build --release
-sudo install -m 755 target/release/board /usr/local/bin/board
-sudo install -m 755 scripts/backup.sh /usr/local/bin/board-backup.sh
-```
-
-## 2. User, directory and config
-
-```sh
-sudo useradd --system --home /var/lib/board --shell /usr/sbin/nologin board
-sudo install -d -o board -g board -m 750 /var/lib/board
-sudo -u board tee /var/lib/board/board.toml >/dev/null <<'TOML'
-bind = "127.0.0.1:7070"
-database = "/var/lib/board/board.db"
-public_origin = "https://board.example.com"
-TOML
-```
-
-The first run adds a random `server_secret` to this file and makes it
-readable only by the `board` user.
-
-## 3. Service
+From your Mac, in `~/dev/board`, with main committed and pushed:
 
 ```sh
-sudo cp deploy/board.service /etc/systemd/system/board.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now board
-systemctl status board        # should be active (running)
-curl -s localhost:7070/healthz
+deploy/deploy.sh            # builds on GitHub Actions, then installs
+deploy/deploy.sh --latest   # skip the build; install the newest successful one
 ```
 
-## 4. Caddy (TLS)
+It runs the **Release** workflow (a static `x86_64-unknown-linux-musl` binary
+with the frontend embedded), downloads it, copies it and the files above to
+`/tmp/board-deploy` on the droplet, and runs `install.sh` there. `install.sh`
+is safe to repeat: it creates the `board` user and config once, gets the
+certificate once, never touches the database, installs the binary and
+units, and restarts the service. Migrations run at start-up.
 
-Point the domain's DNS at the droplet, add `deploy/Caddyfile`'s block to
-`/etc/caddy/Caddyfile`, then `sudo systemctl reload caddy`.
-`https://board.example.com/healthz` should answer.
+The build happens on GitHub because the droplet (2 GB, shared with live
+services) shouldn't compile Rust, and the Mac would need a Linux cross
+toolchain.
 
-## 5. Log in, and a token for scripts
+## After the first deploy
+
+On the droplet (`ssh -i ~/.ssh/keys/kritano root@167.71.134.177`):
 
 ```sh
-sudo -u board board --config /var/lib/board/board.toml login
-# open the printed link in your browser (works once, within 10 minutes)
-
-sudo -u board board --config /var/lib/board/board.toml token create --name laptop --scope admin --actor api
-# shown once: store it in your password manager
+B="sudo -u board board --config /var/lib/board/board.toml"
+$B login                                                     # one-time link for your browser
+$B token create --name laptop --scope admin --actor api      # scripts
+$B token create --name claude-mcp --scope admin --actor claude
+$B token create --name design --scope read --actor api       # Design reads the model
 ```
 
-## 6. Connect Claude Code
+Each token is shown once; keep it in your password manager. Then connect
+Claude Code:
 
 ```sh
-sudo -u board board --config /var/lib/board/board.toml token create --name claude-mcp --scope admin --actor claude
-claude mcp add --transport http board https://board.example.com/mcp --header "Authorization: Bearer brd_…"
+claude mcp add --transport http board https://board.kritano.com/mcp \
+  --header "Authorization: Bearer brd_…"
 ```
 
-`/mcp` only accepts requests for `localhost` and the host in `public_origin`,
-so make sure `public_origin` is your real domain.
-
-## 7. Backups
+## Day to day
 
 ```sh
-sudo -u board crontab -e
-# add (set BACKUP_REMOTE to somewhere off this droplet):
-# 15 3 * * * BACKUP_REMOTE=backup@nas.example.com:board/ /usr/local/bin/board-backup.sh
+journalctl -u board -n 100            # logs
+systemctl list-timers board-backup    # next backup
 ```
 
-The `board` user needs an SSH key that the remote accepts. Run the script once
-by hand to check it works:
+## Backups
 
-```sh
-sudo -u board /usr/local/bin/board-backup.sh
-```
+`board-backup.timer` runs `board-backup.sh` nightly at 03:15: a consistent
+copy of `board.db` (SQLite's online backup), checked and gzipped, in
+`/var/lib/board/backups/`, 14 days kept. To also copy it off the droplet, put
+`BACKUP_REMOTE=user@host:board/` in `/etc/board-backup.env` and give the
+`board` user an SSH key the remote accepts.
 
 ### Test a restore (do this once)
 
@@ -89,17 +75,6 @@ printf 'database = "/tmp/restore.db"\nbind = "127.0.0.1:7071"\n' > /tmp/restore.
 board --config /tmp/restore.toml serve     # then: curl localhost:7071/healthz
 ```
 
-To restore for real: `sudo systemctl stop board`, replace
-`/var/lib/board/board.db` with the unzipped backup (and delete any
-`board.db-wal` and `board.db-shm` next to it), then `sudo systemctl start board`.
-
-## Updating
-
-```sh
-cd board && git pull
-(cd web && npm ci && npm run build) && cargo build --release
-sudo install -m 755 target/release/board /usr/local/bin/board
-sudo systemctl restart board
-```
-
-Migrations run automatically on start.
+To restore for real: `systemctl stop board`, replace `/var/lib/board/board.db`
+with the unzipped backup (and delete any `board.db-wal` and `board.db-shm`
+next to it), then `systemctl start board`.

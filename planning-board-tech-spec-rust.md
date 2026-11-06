@@ -88,7 +88,7 @@ Cards, shapes, sticky notes, text and frames are all **items** in one table with
 | Frontend | Preact with `@preact/signals`, TypeScript, plain CSS, built with esbuild, embedded with `rust-embed` | About 8.5 KB gzipped together (measured); esbuild compiles the JSX with no plugin; signals re-render only what changed. Drags move elements directly and commit to state at the end |
 | Rendering | Own SVG renderer, `ttf-parser` for text measurement, `usvg`/`resvg` for text-to-paths and PNG, Inter bundled | Board draws its own images without a browser (section 8.1) |
 | Diagrams | Mermaid in the browser, lazy-loaded, for diagram cards only | Heavy, so keep it off the critical path |
-| Deploy | One DigitalOcean droplet, systemd, Caddy/nginx in front | Same as your other services |
+| Deploy | The Kritano droplet, systemd, nginx and certbot in front; a static binary built by GitHub Actions | Same as Motion |
 
 ### Workspace layout
 

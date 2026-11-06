@@ -1,5 +1,0 @@
-# Add to /etc/caddy/Caddyfile. Caddy gets the TLS certificate automatically.
-board.example.com {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:7070
-}

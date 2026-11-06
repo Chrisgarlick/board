@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up Board's database nightly
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

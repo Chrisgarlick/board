@@ -1,0 +1,12 @@
+# /etc/systemd/system/board-backup.service: a nightly copy of board.db
+# (scripts/backup.sh). Set BACKUP_REMOTE in /etc/board-backup.env to also
+# copy it off the droplet.
+[Unit]
+Description=Back up Board's database
+
+[Service]
+Type=oneshot
+User=board
+Group=board
+EnvironmentFile=-/etc/board-backup.env
+ExecStart=/usr/local/bin/board-backup.sh
