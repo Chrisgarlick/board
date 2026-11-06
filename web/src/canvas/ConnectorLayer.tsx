@@ -5,7 +5,7 @@
 
 import { useRef, useState } from "preact/hooks";
 
-import { connectorIds, connectors, item, selectedConnector, select, updateConnector } from "../store";
+import { connectorIds, connectors, frameIds, item, itemIds, selectedConnector, select, updateConnector } from "../store";
 import type { Connector, ConnectorStyle } from "../types";
 import { connecting, hoverTarget, liveRect } from "./interact";
 import { anchorPoint, pathData, route, type Point, type Route } from "./routing";
@@ -30,6 +30,10 @@ export function ConnectorLayer() {
 }
 
 function routeFor(c: Connector): Route | null {
+  // Read the item lists so connectors redraw (or hide) when an end is added
+  // or removed: the item map itself isn't reactive.
+  void itemIds.value;
+  void frameIds.value;
   const a = item(c.from_item);
   const b = item(c.to_item);
   if (!a || !b) return null;

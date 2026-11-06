@@ -6,6 +6,7 @@ import { useLayoutEffect, useRef } from "preact/hooks";
 import {
   bottomZ,
   connectors,
+  historyFor,
   place,
   remove,
   reshape,
@@ -151,6 +152,11 @@ function ItemBar() {
       >
         {locked ? "Unlock" : "Lock"}
       </button>
+      {list.length === 1 && (
+        <button type="button" title="Saved versions of this item" onClick={() => (historyFor.value = first.id)}>
+          History
+        </button>
+      )}
       <button type="button" class="danger" title="Delete" onClick={() => void remove(ids)}>
         Delete
       </button>

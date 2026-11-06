@@ -11,15 +11,19 @@ import { Overlay } from "../canvas/Overlay";
 import { addNext } from "../canvas/quickflow";
 import { StyleBar } from "../canvas/StyleBar";
 import { TOOL_KEYS, Toolbar } from "../canvas/Toolbar";
+import { HistoryPanel } from "../canvas/HistoryPanel";
 import { TrashPanel } from "../canvas/TrashPanel";
+import { listen } from "../live";
 import { clampZoom, fit, panBy, toCanvas, view, zoomAt } from "../canvas/viewport";
 import { navigate } from "../router";
 import {
   board,
+  boardGone,
   bottomZ,
   create,
   editingId,
   frameIds,
+  historyFor,
   item,
   itemIds,
   items,
@@ -65,8 +69,10 @@ export function BoardView({ id }: { id: string }) {
         requestAnimationFrame(() => fitTo(allItems()));
       })
       .catch(() => !cancelled && setState({ kind: "missing" }));
+    const stop = listen(id);
     return () => {
       cancelled = true;
+      stop();
     };
   }, [id]);
 
@@ -252,7 +258,7 @@ export function BoardView({ id }: { id: string }) {
   }
 
   if (state.kind === "loading") return <p class="page-message">Opening board…</p>;
-  if (state.kind === "missing")
+  if (state.kind === "missing" || boardGone.value)
     return (
       <main class="page-message">
         <p>This board doesn't exist, or it was deleted.</p>
@@ -397,6 +403,7 @@ export function BoardView({ id }: { id: string }) {
       </div>
 
       {trashOpen && b && <TrashPanel boardId={b.id} onClose={() => setTrashOpen(false)} />}
+      {historyFor.value && !trashOpen && <HistoryPanel id={historyFor.value} />}
     </div>
   );
 }

@@ -3,7 +3,8 @@
 
 import type { Board, BoardSummary, Connector, FullBoard, Item, Revision } from "./types";
 
-const CLIENT_ID = crypto.randomUUID();
+/** This tab's id. Live updates carry it back so the tab can skip its own changes. */
+export const CLIENT_ID = crypto.randomUUID();
 
 export class ApiError extends Error {
   constructor(
@@ -96,4 +97,6 @@ export const api = {
   deleteItem: (id: string) => request<void>("DELETE", `/items/${id}`),
   undeleteItem: (id: string) => request<Item>("POST", `/items/${id}/undelete`),
   revisions: (id: string) => request<{ revisions: Revision[] }>("GET", `/items/${id}/revisions`),
+  restoreRevision: (id: string, rev: number, version: number) =>
+    request<Item>("POST", `/items/${id}/restore/${rev}`, { version }),
 };

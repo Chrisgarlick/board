@@ -10,6 +10,7 @@ use sqlx::SqlitePool;
 use crate::assets;
 use crate::clock::Clock;
 use crate::config::Config;
+use crate::events::Hub;
 use crate::routes;
 
 /// State shared by every handler.
@@ -18,6 +19,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub pool: SqlitePool,
     pub clock: Arc<dyn Clock>,
+    pub hub: Hub,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -25,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .merge(routes::public())
         .nest("/api", routes::api(state.clone()))
+        .nest_service("/mcp", crate::mcp::service(state.clone()))
         .fallback(assets::serve)
         .with_state(state)
 }

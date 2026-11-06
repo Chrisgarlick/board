@@ -53,6 +53,12 @@ export const selectedConnector = signal<string | null>(null);
 export const editingId = signal<string | null>(null);
 export const tool = signal<Tool>("select");
 export const status = signal<{ kind: "info" | "error"; text: string } | null>(null);
+/** Items changed by someone else (another tab, Claude, a script) in the last few seconds. */
+export const fresh = signal<ReadonlySet<string>>(new Set());
+/** The item whose history panel is open. */
+export const historyFor = signal<string | null>(null);
+/** Set when the open board is deleted elsewhere. */
+export const boardGone = signal(false);
 
 export const selectedItems = computed(() =>
   [...selection.value].map((id) => items.get(id)?.item.value).filter((i): i is Item => !!i),
@@ -99,6 +105,9 @@ export function load(b: Board, list: Item[], conns: Connector[]): void {
     redoStack.length = 0;
     canUndo.value = false;
     canRedo.value = false;
+    fresh.value = new Set();
+    historyFor.value = null;
+    boardGone.value = false;
   });
 }
 
@@ -113,7 +122,19 @@ function resort(): void {
   itemIds.value = list.filter((i) => i.kind !== "frame").sort(byZ).map((i) => i.id);
 }
 
-/** Insert or update items from the server. Unsaved local text is kept. */
+/** Whether this tab is editing an item's text right now (any editor inside it has focus). */
+function editingHere(id: string): boolean {
+  if (editingId.value === id) return true;
+  const focused = document.activeElement;
+  return !!focused && focused !== document.body && focused.closest("[data-item]")?.getAttribute("data-item") === id;
+}
+
+/**
+ * Insert or update items from the server. While an item is being edited
+ * here, or has unsaved changes, its text, style and version stay local: the
+ * next save then conflicts and shows "changed elsewhere", instead of
+ * silently overwriting what someone else did.
+ */
 function upsertItems(list: Item[]): void {
   for (const incoming of list) {
     const state = items.get(incoming.id);
@@ -122,9 +143,9 @@ function upsertItems(list: Item[]): void {
       continue;
     }
     const queue = queues.get(incoming.id);
-    if (queue?.busy()) {
-      // A content save is pending or in flight: take geometry and membership
-      // from the server, keep the local text, version and style.
+    if (queue?.busy() || editingHere(incoming.id)) {
+      // Take geometry and membership from the server; keep the local text,
+      // version and style.
       const local = state.item.value;
       state.item.value = {
         ...local,
@@ -198,6 +219,94 @@ export async function runOps(ops: Op[]): Promise<Record<string, string>> {
     resort();
   });
   return result.refs;
+}
+
+// ---------- Live updates from elsewhere ----------
+
+const FRESH_MS = 2500;
+
+/** A change published by the server (crates/board/src/events.rs). */
+export interface RemoteChange {
+  type: string;
+  item?: Item;
+  connector?: Connector;
+  id?: string;
+  board?: Board;
+}
+
+/** Apply changes made elsewhere: other tabs, Claude, scripts. */
+export function applyRemote(changes: RemoteChange[]): void {
+  const b = board.value;
+  if (!b) return;
+  const touched: string[] = [];
+  batch(() => {
+    const upserts: Item[] = [];
+    for (const c of changes) {
+      switch (c.type) {
+        case "item.created":
+        case "item.updated":
+        case "item.geometry":
+        case "item.undeleted":
+        case "item.moved":
+          if (!c.item) break;
+          if (c.item.board_id !== b.id) {
+            removeItems([c.item.id]); // moved to another board
+          } else {
+            upserts.push(c.item);
+            touched.push(c.item.id);
+          }
+          break;
+        case "item.deleted":
+          if (c.id) removeItems([c.id]);
+          break;
+        case "connector.created":
+        case "connector.updated":
+          if (c.connector) upsertConnector(c.connector);
+          break;
+        case "connector.deleted":
+          if (c.id) removeConnector(c.id);
+          break;
+        case "board.updated":
+          if (c.board) board.value = c.board;
+          break;
+        case "board.deleted":
+          boardGone.value = true;
+          break;
+      }
+    }
+    upsertItems(upserts);
+    resort();
+    if (touched.length) fresh.value = new Set([...fresh.value, ...touched]);
+  });
+  if (touched.length) {
+    setTimeout(() => {
+      const next = new Set(fresh.value);
+      for (const id of touched) next.delete(id);
+      fresh.value = next;
+    }, FRESH_MS);
+  }
+}
+
+/** Reload the board after missing updates, keeping the view, selection and undo history. */
+export async function reload(): Promise<void> {
+  const b = board.value;
+  if (!b) return;
+  try {
+    const full = await api.getBoard(b.id);
+    batch(() => {
+      const keep = new Set(full.items.map((i) => i.id));
+      for (const id of [...items.keys()]) if (!keep.has(id)) removeItems([id]);
+      upsertItems(full.items);
+      connectors.clear();
+      for (const c of full.connectors) connectors.set(c.id, signal(c));
+      connectorIds.value = full.connectors.map((c) => c.id);
+      board.value = full.board;
+      resort();
+    });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) boardGone.value = true;
+    else report(err, "refresh the board");
+  }
 }
 
 // ---------- Undo and redo ----------
@@ -399,6 +508,20 @@ export async function restoreFromTrash(id: string): Promise<void> {
     select([id]);
   } catch (err) {
     report(err, "restore that");
+  }
+}
+
+/** Put an item back to an earlier revision (a normal versioned change on the server). */
+export async function restoreRevision(id: string, revision: number): Promise<void> {
+  const state = items.get(id);
+  if (!state) return;
+  queues.get(id)?.cancel();
+  try {
+    const restored = await api.restoreRevision(id, revision, state.item.value.version);
+    state.item.value = restored;
+    status.value = { kind: "info", text: "Restored that version." };
+  } catch (err) {
+    report(err, "restore that version");
   }
 }
 

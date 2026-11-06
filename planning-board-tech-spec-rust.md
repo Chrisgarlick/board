@@ -664,7 +664,9 @@ Content updates carry `version`; a stale write returns 409 with the current reco
 
 Events: `item.created`, `item.updated`, `item.geometry`, `item.deleted`, `item.undeleted`, `item.moved`, `connector.created`, `connector.updated`, `connector.deleted`, `table.created`, `table.updated`, `table.deleted`, `table.undeleted`, `board.updated`, `batch`, `resync`.
 
-- Each event carries the changed record plus `origin`: the `X-Client-Id` header of the request that caused it (the UI sends a random id per tab; MCP and scripts may omit it). A tab ignores events with its own `origin`.
+- Each event's data is `{ "origin": …, "changes": [{ "type": …, "item" | "connector" | "id" | "board": … }] }`. The SSE event name is the change type when there's one change, or `batch` for several. A `ready` event opens every stream.
+- `origin` is the `X-Client-Id` header of the request that caused it (the UI sends a random id per tab; MCP and scripts send none). A tab ignores events with its own `origin`.
+- While an item is being edited in a tab (or has unsaved changes there), incoming changes to it update its position but leave its text and version alone, so the tab's next save conflicts and shows "changed elsewhere" instead of overwriting the other change.
 - A batch, a frame move and a flow creation are sent as one `batch` event containing the individual events, so other tabs apply them in one go rather than animating 40 separate changes.
 - `item.geometry` events carry the item's new `frame_id`, since membership can change on a move.
 - `table.*` events also carry the new `schema_version`.
@@ -675,7 +677,7 @@ Events: `item.created`, `item.updated`, `item.geometry`, `item.deleted`, `item.u
 
 ## 7. MCP server
 
-Mounted at `/mcp` (Streamable HTTP), bearer auth with an `admin` token whose `actor` is `claude`. Each tool is a thin wrapper over a service function.
+Mounted at `/mcp` (Streamable HTTP), bearer auth with an `admin` token whose `actor` is `claude`. Each tool is a thin wrapper over a service function. The server accepts requests addressed to `localhost`, `127.0.0.1` and the host in `public_origin` only (DNS-rebinding protection), so `public_origin` must be the real domain in production.
 
 | Tool | Args | Notes |
 |---|---|---|
@@ -1101,7 +1103,7 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 2. Pull mode requires Typeset to reach Board over HTTP. Are they on the same droplet or network, or does one sit behind auth that complicates this?
 3. ~~Per-client folders or a flat list?~~ **Decided:** a flat list of boards with search for v1. Later, boards can be attached to a client: a `clients` table and a nullable `boards.client_id`, added by an additive migration, with a client filter on the board list.
 4. ~~Frontend framework?~~ **Decided:** Preact with signals (see the stack table in section 2).
-5. Which MCP clients matter? Claude Code alone works with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector probably means adding OAuth to `/mcp`; check the current connector docs before committing.
+5. ~~Which MCP clients?~~ **Decided:** Claude Code only for now, with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector would mean adding OAuth to `/mcp`; revisit when needed.
 6. Fonts: exports use Inter by default. Should client PDFs use a brand font per board (configured on the board, loaded from a font file)? It's a small addition to the renderer, but every export path would need to honour it.
 7. One schema per board assumes one board per job. If you want several independent schemas on one board (for example, comparing two designs of the same data), tables would gain a `schema_id` and schema cards would belong to one schema. Easy now, harder after M5, so decide before then.
 8. What is Design built in? If Rust, it uses the `board-model` crate; otherwise it generates types from the JSON Schema.

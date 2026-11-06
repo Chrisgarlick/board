@@ -3,6 +3,7 @@
 pub mod batch;
 pub mod boards;
 pub mod connectors;
+pub mod flows;
 pub mod frames;
 pub mod housekeeping;
 pub mod items;

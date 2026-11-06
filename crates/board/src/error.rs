@@ -77,7 +77,8 @@ impl AppError {
         }
     }
 
-    fn body(&self) -> Value {
+    /// The JSON error body, also used for MCP tool errors.
+    pub fn body(&self) -> Value {
         match self {
             Self::NotFound(_) => json!({ "error": "not_found", "message": self.to_string() }),
             Self::Conflict { current } => json!({

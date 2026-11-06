@@ -5,6 +5,7 @@ import { useRef } from "preact/hooks";
 import {
   editContent,
   editingId,
+  fresh,
   keepMine,
   rememberEdit,
   remove,
@@ -34,7 +35,7 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
 
   return (
     <article
-      class={`item card${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${far ? " is-far" : ""}${item.locked ? " is-locked" : ""}`}
+      class={`item card${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${far ? " is-far" : ""}${item.locked ? " is-locked" : ""}${fresh.value.has(item.id) ? " is-fresh" : ""}`}
       data-item={item.id}
       style={{ left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }}
       aria-label={`${label}: ${title || "untitled"}`}

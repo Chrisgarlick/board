@@ -114,6 +114,7 @@ async fn serve(config_path: &Path) -> Result<()> {
         config: Arc::new(config),
         pool,
         clock,
+        hub: Default::default(),
     };
     let listener = tokio::net::TcpListener::bind(bind)
         .await

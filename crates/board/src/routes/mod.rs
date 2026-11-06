@@ -1,5 +1,8 @@
 //! REST handlers (spec section 6). Each one opens a transaction, calls the
-//! service layer and commits; the services hold the rules.
+//! service layer, commits, and publishes what changed to live subscribers.
+//!
+//! Item and connector writes all go through the batch machinery, even for a
+//! single change, so REST, the UI's batches and MCP produce identical events.
 
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -13,9 +16,11 @@ use crate::app::AppState;
 use crate::auth;
 use crate::db;
 use crate::error::{ApiJson, AppError, AppResult};
-use crate::service::batch::{self, Batch};
+use crate::events::Change;
+use crate::service::batch::{self, Batch, BatchResult, Op};
 use crate::service::boards::{self, BoardPatch, NewBoard};
 use crate::service::connectors::{self, ConnectorPatch, NewConnector};
+use crate::service::flows::{self, FlowRequest};
 use crate::service::items::{self, Geometry, ItemPatch, NewItem};
 use crate::service::moves::{self, MoveRequest};
 use crate::service::search;
@@ -23,6 +28,7 @@ use crate::types::{Caller, Ctx};
 
 const DEFAULT_BODY_LIMIT: usize = 1024 * 1024;
 const BATCH_BODY_LIMIT: usize = 2 * 1024 * 1024;
+const MAX_CLIENT_ID: usize = 64;
 
 /// Routes under `/api`, all behind authentication.
 pub fn api(state: AppState) -> Router<AppState> {
@@ -34,11 +40,14 @@ pub fn api(state: AppState) -> Router<AppState> {
             "/boards/{id}",
             get(get_board).patch(update_board).delete(delete_board),
         )
+        .route("/boards/{id}/events", get(events))
         .route("/boards/{id}/items", post(create_item))
         .route(
             "/boards/{id}/batch",
             post(apply_batch).layer(DefaultBodyLimit::max(BATCH_BODY_LIMIT)),
         )
+        .route("/boards/{id}/flows", post(create_flow))
+        .route("/boards/{id}/flows/{frame_id}/mermaid", get(flow_mermaid))
         .route("/boards/{id}/trash", get(trash))
         .route(
             "/items/{id}",
@@ -66,15 +75,56 @@ pub fn public() -> Router<AppState> {
     Router::new().route("/login/{code}", get(login))
 }
 
-fn ctx(state: &AppState, caller: Caller) -> Ctx {
+pub fn ctx(state: &AppState, caller: Caller) -> Ctx {
     Ctx {
         actor: caller.actor,
         now: state.clock.now(),
     }
 }
 
+/// The caller's `X-Client-Id`, used to tag live updates with who caused them.
+fn origin(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-client-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty() && v.len() <= MAX_CLIENT_ID)
+        .map(str::to_string)
+}
+
 async fn api_not_found() -> AppError {
     AppError::NotFound("route")
+}
+
+/// Run operations on a board in one transaction and publish their changes.
+pub async fn run_batch(
+    state: &AppState,
+    caller: Caller,
+    origin: Option<String>,
+    board_id: &str,
+    ops: Vec<Op>,
+) -> AppResult<BatchResult> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let mut result = batch::apply(&mut tx, ctx(state, caller), board_id, Batch { ops }).await?;
+    tx.commit().await?;
+    state
+        .hub
+        .publish(board_id, origin, std::mem::take(&mut result.changes));
+    Ok(result)
+}
+
+/// The single result of a one-op batch.
+fn only(mut result: BatchResult) -> Value {
+    result.results.pop().unwrap_or(Value::Null)
+}
+
+async fn board_of_item(state: &AppState, id: &str) -> AppResult<String> {
+    let mut conn = state.pool.acquire().await?;
+    items::board_of(&mut conn, id).await
+}
+
+async fn board_of_connector(state: &AppState, id: &str) -> AppResult<String> {
+    let mut conn = state.pool.acquire().await?;
+    connectors::board_of(&mut conn, id).await
 }
 
 // ---------- Auth ----------
@@ -167,23 +217,42 @@ async fn get_board(
 async fn update_board(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<BoardPatch>,
 ) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
     let board = boards::update(&mut tx, ctx(&state, caller), &id, body).await?;
     tx.commit().await?;
-    Ok(Json(json!(board)))
+    let value = json!(board);
+    state.hub.publish(
+        &id,
+        origin(&headers),
+        vec![Change::board("board.updated", value.clone())],
+    );
+    Ok(Json(value))
 }
 
 async fn delete_board(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
     let mut tx = db::write_tx(&state.pool).await?;
     boards::delete(&mut tx, &id).await?;
     tx.commit().await?;
+    state.hub.publish(
+        &id,
+        origin(&headers),
+        vec![Change::removed("board.deleted", id.clone())],
+    );
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn events(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Response> {
+    let mut conn = state.pool.acquire().await?;
+    boards::require_exists(&mut conn, &id).await?;
+    Ok(state.hub.stream(&id).into_response())
 }
 
 async fn trash(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Value>> {
@@ -199,13 +268,42 @@ async fn trash(State(state): State<AppState>, Path(id): Path<String>) -> AppResu
 async fn apply_batch(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<Batch>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let result = batch::apply(&mut tx, ctx(&state, caller), &id, body).await?;
-    tx.commit().await?;
+    let result = run_batch(&state, caller, origin(&headers), &id, body.ops).await?;
     Ok(Json(json!(result)))
+}
+
+// ---------- Flows ----------
+
+async fn create_flow(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<FlowRequest>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    let mut tx = db::write_tx(&state.pool).await?;
+    let (created, changes) = flows::create(&mut tx, ctx(&state, caller), &id, body)
+        .await
+        .map_err(|e| match e {
+            AppError::InBatch { source, .. } => *source,
+            other => other,
+        })?;
+    tx.commit().await?;
+    state.hub.publish(&id, origin(&headers), changes);
+    Ok((StatusCode::CREATED, Json(json!(created))))
+}
+
+async fn flow_mermaid(
+    State(state): State<AppState>,
+    Path((id, frame_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let mut conn = state.pool.acquire().await?;
+    let mermaid = flows::frame_to_mermaid(&mut conn, &id, &frame_id).await?;
+    Ok(Json(json!({ "mermaid": mermaid })))
 }
 
 // ---------- Items ----------
@@ -213,13 +311,25 @@ async fn apply_batch(
 async fn create_item(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(board_id): Path<String>,
     ApiJson(body): ApiJson<NewItem>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let (item, _) = items::create(&mut tx, ctx(&state, caller), &board_id, body).await?;
-    tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(json!(item))))
+    let op = Op::CreateItem {
+        reference: None,
+        kind: body.kind,
+        card_type: body.card_type,
+        title: body.title,
+        content: body.content,
+        style: body.style,
+        x: body.x,
+        y: body.y,
+        w: body.w,
+        h: body.h,
+        z: body.z,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board_id, vec![op]).await?;
+    Ok((StatusCode::CREATED, Json(only(result))))
 }
 
 async fn get_item(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Value>> {
@@ -230,25 +340,50 @@ async fn get_item(State(state): State<AppState>, Path(id): Path<String>) -> AppR
 async fn update_item(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ItemPatch>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let item = items::update(&mut tx, ctx(&state, caller), &id, body).await?;
-    tx.commit().await?;
-    Ok(Json(json!(item)))
+    let board = board_of_item(&state, &id).await?;
+    let op = Op::UpdateItem {
+        item: id,
+        version: body.version,
+        title: body.title,
+        content: body.content,
+        style: body.style,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
+}
+
+/// A one-op batch reports errors with `op_index`; for single-item routes
+/// that's noise, so unwrap it.
+fn unwrap_single(result: AppResult<BatchResult>) -> AppResult<BatchResult> {
+    result.map_err(|e| match e {
+        AppError::InBatch { source, .. } => *source,
+        other => other,
+    })
 }
 
 async fn set_geometry(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<Geometry>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let (item, _) = items::set_geometry(&mut tx, ctx(&state, caller), &id, body).await?;
-    tx.commit().await?;
-    Ok(Json(json!(item)))
+    let board = board_of_item(&state, &id).await?;
+    let op = Op::SetGeometry {
+        item: id,
+        x: body.x,
+        y: body.y,
+        w: body.w,
+        h: body.h,
+        z: body.z,
+        locked: body.locked,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
 }
 
 #[derive(Deserialize)]
@@ -260,24 +395,82 @@ struct DeleteQuery {
 async fn delete_item(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<DeleteQuery>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let deleted = items::delete(&mut tx, ctx(&state, caller), &id, query.with_contents).await?;
-    tx.commit().await?;
-    Ok(Json(json!(deleted)))
+    let board = board_of_item(&state, &id).await?;
+    let op = Op::DeleteItem {
+        item: id,
+        with_contents: query.with_contents,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
 }
 
 async fn undelete_item(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
+    let board = board_of_item(&state, &id).await?;
+    let op = Op::UndeleteItem { item: id };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
+}
+
+async fn move_items(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    ApiJson(body): ApiJson<MoveRequest>,
+) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
-    let (item, _) = items::undelete(&mut tx, ctx(&state, caller), &id).await?;
+    let moved = moves::move_items(&mut tx, ctx(&state, caller), body).await?;
+    let mut left_behind = Vec::new();
+    for id in &moved.affected {
+        if let Ok(item) = items::get(&mut tx, id).await {
+            left_behind.push(item);
+        }
+    }
     tx.commit().await?;
-    Ok(Json(json!(item)))
+
+    // Both boards hear about the move: the old one loses the items, the new
+    // one gains them.
+    let origin = origin(&headers);
+    let mut from_changes: Vec<Change> = moved
+        .items
+        .iter()
+        .map(|i| Change::item("item.moved", i.clone()))
+        .collect();
+    from_changes.extend(
+        moved
+            .removed_connectors
+            .iter()
+            .map(|c| Change::removed("connector.deleted", c.clone())),
+    );
+    from_changes.extend(
+        left_behind
+            .into_iter()
+            .map(|i| Change::item("item.geometry", i)),
+    );
+    state
+        .hub
+        .publish(&moved.from_board, origin.clone(), from_changes);
+    let mut to_changes: Vec<Change> = moved
+        .items
+        .iter()
+        .map(|i| Change::item("item.moved", i.clone()))
+        .collect();
+    let mut conn = state.pool.acquire().await?;
+    for cid in &moved.connectors {
+        if let Ok(c) = connectors::get(&mut conn, cid).await {
+            to_changes.push(Change::connector("connector.created", c));
+        }
+    }
+    state.hub.publish(&moved.to_board, origin, to_changes);
+    Ok(Json(json!(moved)))
 }
 
 async fn revisions(
@@ -298,24 +491,19 @@ struct RestoreBody {
 async fn restore_revision(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path((id, rev)): Path<(String, i64)>,
     ApiJson(body): ApiJson<RestoreBody>,
 ) -> AppResult<Json<Value>> {
     let mut tx = db::write_tx(&state.pool).await?;
     let item = items::restore(&mut tx, ctx(&state, caller), &id, rev, body.version).await?;
     tx.commit().await?;
+    state.hub.publish(
+        &item.board_id,
+        origin(&headers),
+        vec![Change::item("item.updated", item.clone())],
+    );
     Ok(Json(json!(item)))
-}
-
-async fn move_items(
-    State(state): State<AppState>,
-    Extension(caller): Extension<Caller>,
-    ApiJson(body): ApiJson<MoveRequest>,
-) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let moved = moves::move_items(&mut tx, ctx(&state, caller), body).await?;
-    tx.commit().await?;
-    Ok(Json(json!(moved)))
 }
 
 // ---------- Connectors ----------
@@ -323,47 +511,66 @@ async fn move_items(
 async fn create_connector(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(board_id): Path<String>,
     ApiJson(body): ApiJson<NewConnector>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let connector = connectors::create(&mut tx, ctx(&state, caller), &board_id, body).await?;
-    tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(json!(connector))))
+    let op = Op::CreateConnector {
+        reference: None,
+        from: body.from,
+        to: body.to,
+        from_anchor: body.from_anchor,
+        to_anchor: body.to_anchor,
+        label: body.label,
+        style: body.style,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board_id, vec![op]).await;
+    Ok((StatusCode::CREATED, Json(only(unwrap_single(result)?))))
 }
 
 async fn update_connector(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ConnectorPatch>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let connector = connectors::update(&mut tx, ctx(&state, caller), &id, body).await?;
-    tx.commit().await?;
-    Ok(Json(json!(connector)))
+    let board = board_of_connector(&state, &id).await?;
+    let op = Op::UpdateConnector {
+        connector: id,
+        from: body.from,
+        to: body.to,
+        from_anchor: body.from_anchor,
+        to_anchor: body.to_anchor,
+        label: body.label,
+        style: body.style,
+    };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
 }
 
 async fn delete_connector(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    connectors::delete(&mut tx, ctx(&state, caller), &id).await?;
-    tx.commit().await?;
+    let board = board_of_connector(&state, &id).await?;
+    let op = Op::DeleteConnector { connector: id };
+    unwrap_single(run_batch(&state, caller, origin(&headers), &board, vec![op]).await)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn undelete_connector(
     State(state): State<AppState>,
     Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = db::write_tx(&state.pool).await?;
-    let connector = connectors::undelete(&mut tx, ctx(&state, caller), &id).await?;
-    tx.commit().await?;
-    Ok(Json(json!(connector)))
+    let board = board_of_connector(&state, &id).await?;
+    let op = Op::UndeleteConnector { connector: id };
+    let result = run_batch(&state, caller, origin(&headers), &board, vec![op]).await;
+    Ok(Json(only(unwrap_single(result)?)))
 }
 
 // ---------- Search ----------

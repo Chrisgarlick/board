@@ -124,6 +124,7 @@ export interface Revision {
   version: number;
   title: string | null;
   content: unknown;
+  style?: unknown;
   changed_by: Actor;
   created_at: string;
   updated_at: string;

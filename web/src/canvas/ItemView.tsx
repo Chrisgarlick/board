@@ -8,6 +8,7 @@ import { useRef } from "preact/hooks";
 import {
   editContent,
   editingId,
+  fresh,
   rememberEdit,
   selection,
   type ContentPatch,
@@ -57,9 +58,10 @@ export function Box({
   const lifted = moving.value.has(i.id);
   const single = selected && selection.value.size === 1;
   const color = i.style?.color ? ` c-${i.style.color}` : "";
+  const isFresh = fresh.value.has(i.id);
   return (
     <div
-      class={`item ${cls}${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${i.locked ? " is-locked" : ""}`}
+      class={`item ${cls}${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${i.locked ? " is-locked" : ""}${isFresh ? " is-fresh" : ""}`}
       data-item={i.id}
       role="group"
       aria-label={label}

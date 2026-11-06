@@ -56,7 +56,17 @@ sudo -u board board --config /var/lib/board/board.toml token create --name lapto
 # shown once: store it in your password manager
 ```
 
-## 6. Backups
+## 6. Connect Claude Code
+
+```sh
+sudo -u board board --config /var/lib/board/board.toml token create --name claude-mcp --scope admin --actor claude
+claude mcp add --transport http board https://board.example.com/mcp --header "Authorization: Bearer brd_…"
+```
+
+`/mcp` only accepts requests for `localhost` and the host in `public_origin`,
+so make sure `public_origin` is your real domain.
+
+## 7. Backups
 
 ```sh
 sudo -u board crontab -e

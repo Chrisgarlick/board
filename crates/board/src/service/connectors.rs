@@ -16,7 +16,7 @@ use crate::types::{Ctx, new_id};
 
 const MAX_LABEL_CHARS: usize = 200;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Anchor {
     Auto,

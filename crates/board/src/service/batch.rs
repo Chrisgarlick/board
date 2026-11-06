@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use sqlx::SqliteConnection;
 
 use crate::error::{AppError, AppResult};
+use crate::events::Change;
 use crate::service::connectors::{self, Anchor, ConnectorPatch, NewConnector};
 use crate::service::items::{self, Geometry, Item, ItemPatch, NewItem};
 use crate::types::Ctx;
@@ -144,12 +145,16 @@ pub struct BatchResult {
     pub refs: HashMap<String, String>,
     /// Items changed as a side effect, in their final state.
     pub affected: Vec<Item>,
+    /// What changed, for live updates. Not part of the response.
+    #[serde(skip)]
+    pub changes: Vec<Change>,
 }
 
 /// Refs created so far, and items changed as side effects.
 struct State {
     refs: HashMap<String, String>,
     affected: BTreeSet<String>,
+    changes: Vec<Change>,
 }
 
 pub async fn apply(
@@ -169,6 +174,7 @@ pub async fn apply(
     let mut state = State {
         refs: HashMap::new(),
         affected: BTreeSet::new(),
+        changes: Vec::new(),
     };
     let mut results = Vec::with_capacity(batch.ops.len());
     for (index, op) in batch.ops.into_iter().enumerate() {
@@ -185,6 +191,9 @@ pub async fn apply(
     let mut affected = Vec::new();
     for id in &state.affected {
         if let Ok(item) = items::get(conn, id).await {
+            state
+                .changes
+                .push(Change::item("item.geometry", item.clone()));
             affected.push(item);
         }
     }
@@ -192,6 +201,7 @@ pub async fn apply(
         results,
         refs: state.refs,
         affected,
+        changes: state.changes,
     })
 }
 
@@ -236,6 +246,9 @@ async fn apply_one(
                 state.refs.insert(r, created.id.clone());
             }
             state.affected.extend(affected);
+            state
+                .changes
+                .push(Change::item("item.created", created.clone()));
             Ok(json!(created))
         }
         Op::UpdateItem {
@@ -252,7 +265,11 @@ async fn apply_one(
                 content,
                 style,
             };
-            Ok(json!(items::update(conn, ctx, &id, patch).await?))
+            let updated = items::update(conn, ctx, &id, patch).await?;
+            state
+                .changes
+                .push(Change::item("item.updated", updated.clone()));
+            Ok(json!(updated))
         }
         Op::SetGeometry {
             item,
@@ -274,6 +291,9 @@ async fn apply_one(
             };
             let (moved, affected) = items::set_geometry(conn, ctx, &id, g).await?;
             state.affected.extend(affected);
+            state
+                .changes
+                .push(Change::item("item.geometry", moved.clone()));
             Ok(json!(moved))
         }
         Op::DeleteItem {
@@ -283,12 +303,20 @@ async fn apply_one(
             let id = resolve_item(conn, board_id, &item, &state.refs).await?;
             let deleted = items::delete(conn, ctx, &id, with_contents).await?;
             state.affected.extend(deleted.affected.iter().cloned());
+            for gone in &deleted.deleted {
+                state
+                    .changes
+                    .push(Change::removed("item.deleted", gone.clone()));
+            }
             Ok(json!(deleted))
         }
         Op::UndeleteItem { item } => {
             let id = resolve_item(conn, board_id, &item, &state.refs).await?;
             let (restored, affected) = items::undelete(conn, ctx, &id).await?;
             state.affected.extend(affected);
+            state
+                .changes
+                .push(Change::item("item.undeleted", restored.clone()));
             Ok(json!(restored))
         }
         Op::CreateConnector {
@@ -321,6 +349,9 @@ async fn apply_one(
             if let Some(r) = reference {
                 state.refs.insert(r, created.id.clone());
             }
+            state
+                .changes
+                .push(Change::connector("connector.created", created.clone()));
             Ok(json!(created))
         }
         Op::UpdateConnector {
@@ -349,16 +380,27 @@ async fn apply_one(
                 label,
                 style,
             };
-            Ok(json!(connectors::update(conn, ctx, &id, patch).await?))
+            let updated = connectors::update(conn, ctx, &id, patch).await?;
+            state
+                .changes
+                .push(Change::connector("connector.updated", updated.clone()));
+            Ok(json!(updated))
         }
         Op::DeleteConnector { connector } => {
             let id = resolve_connector(conn, board_id, &connector, &state.refs).await?;
             connectors::delete(conn, ctx, &id).await?;
+            state
+                .changes
+                .push(Change::removed("connector.deleted", id.clone()));
             Ok(json!({ "deleted_connector": id }))
         }
         Op::UndeleteConnector { connector } => {
             let id = resolve_connector(conn, board_id, &connector, &state.refs).await?;
-            Ok(json!(connectors::undelete(conn, ctx, &id).await?))
+            let restored = connectors::undelete(conn, ctx, &id).await?;
+            state
+                .changes
+                .push(Change::connector("connector.created", restored.clone()));
+            Ok(json!(restored))
         }
     }
 }

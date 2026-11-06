@@ -58,4 +58,19 @@ cargo run -- token create --name laptop --scope admin --actor api   # for script
 
 `board --help` lists every command. `pull` arrives in phase 6.
 
+## Connecting Claude Code
+
+Board is an MCP server at `/mcp`. Create a token that acts as Claude, then add it to Claude Code:
+
+```sh
+board token create --name claude-mcp --scope admin --actor claude     # prints brd_…
+claude mcp add --transport http board https://board.example.com/mcp \
+  --header "Authorization: Bearer brd_…"
+```
+
+(Locally, use `http://localhost:7070/mcp`.) Claude can then list and read boards,
+draw flows from Mermaid, add and edit items and connectors, and restore
+revisions. Everything it does is recorded as Claude, appears live in open tabs
+with a brief highlight, and can be undone from an item's History or the Trash.
+
 Deploying to a server: see [`deploy/README.md`](deploy/README.md).

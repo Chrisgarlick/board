@@ -53,6 +53,7 @@ impl TestApp {
             config: Arc::new(config),
             pool,
             clock: clock.clone(),
+            hub: Default::default(),
         };
         let admin = auth::create_token(
             &state.pool,

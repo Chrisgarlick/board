@@ -13,7 +13,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 | ~~Frontend framework~~ | Phase 1 | §15 Q4 | **Decided:** Preact with signals |
 | ~~Folders or a flat list~~ | Phase 1 | §15 Q3 | **Decided:** flat list with search; attaching boards to clients comes later |
 | ~~Shape set, nested frames~~ | Phase 2 | §15 Q9 | **Decided:** shape set as specced; no nesting in v1, can be added later |
-| Which MCP clients (Claude Code only, or claude.ai / Desktop too) | Phase 3 | §15 Q5 | Claude Code only means a static token; the others probably need OAuth |
+| ~~Which MCP clients~~ | Phase 3 | §15 Q5 | **Decided:** Claude Code only for now, with a static bearer token; OAuth for claude.ai / Desktop can be added later |
 | Default font, and whether boards get a brand font | Phase 4 | §15 Q6 | Recommendation: Inter only for v1 |
 | One schema per board, or several | Phase 5 | §15 Q7 | Recommendation: one, as specced |
 | What Design is written in | Phase 6 | §15 Q8 | Rust → `board-model` crate; otherwise JSON Schema |
@@ -140,26 +140,34 @@ Files and instructions are ready in `deploy/` (`deploy/README.md` walks through 
 
 ### Backend
 
-- [ ] SSE (`events.rs`): `tokio::sync::broadcast` per board; every event type from §6 Live updates; `batch` events for batches, frame moves and flows; `origin` on every event; `resync` when a subscriber lags.
-- [ ] `flow/mermaid.rs`: the Mermaid flowchart subset parser (§5.3) with line-numbered errors, and the reverse (frame → Mermaid). Input caps (64 KB, 500 nodes).
-- [ ] `flow/layout.rs`: layered layout (§5.3): cycle breaking, longest-path layers, barycentre ordering, fixed spacing, `TB`/`LR`, frame wrapping, placement in free space or `near` an item.
-- [ ] Endpoints: `POST /api/boards/{id}/flows`, `POST /api/items/{id}/convert-to-shapes`, `GET …/flows/{frame_id}/mermaid`.
-- [ ] `mcp.rs` with `rmcp` on `/mcp` (check the crate's current docs first): every tool in §7 that exists so far: boards, items, `add_items`, `draw_flow`, `get_flow`, `update_item`, `set_geometry`, `move_items_to_board`, `delete_items` (5-minute user-edit guard), connectors, revisions, search. Tool descriptions include the exact content shapes, style fields and Mermaid subset.
-- [ ] `board://{id}` resource.
-- [ ] OpenAPI via `utoipa`, served at `/api/openapi.json`.
-- [ ] Tests: parser (every node shape, edge style, labels, chains, subgraphs, each unsupported construct), Mermaid round trip, layout determinism and no overlaps, MCP tools against a test database.
+- [x] SSE (`events.rs`): `tokio::sync::broadcast` per board; every event type from §6 Live updates; `batch` events for batches, frame moves and flows; `origin` on every event; `resync` when a subscriber lags.
+- [x] `flow/mermaid.rs`: the Mermaid flowchart subset parser (§5.3) with line-numbered errors, and the reverse (frame → Mermaid). Input caps (64 KB, 500 nodes).
+- [x] `flow/layout.rs`: layered layout (§5.3): cycle breaking, longest-path layers, barycentre ordering, fixed spacing, `TB`/`LR`, frame wrapping, placement in free space or `near` an item.
+- [x] Endpoints: `POST /api/boards/{id}/flows`, `GET …/flows/{frame_id}/mermaid`. (`POST /api/items/{id}/convert-to-shapes` moves to phase 8, with diagram cards.)
+- [x] `mcp.rs` with `rmcp` on `/mcp` (check the crate's current docs first): every tool in §7 that exists so far: boards, items, `add_items`, `draw_flow`, `get_flow`, `update_item`, `set_geometry`, `move_items_to_board`, `delete_items` (5-minute user-edit guard), connectors, revisions, search. Tool descriptions include the exact content shapes, style fields and Mermaid subset.
+- [ ] `board://{id}` resource. Deferred: `get_board` covers it, and the resource API in rmcp 3.9 is awkward. Revisit if Claude Code makes good use of resources.
+- [ ] OpenAPI via `utoipa`, served at `/api/openapi.json`. Deferred to phase 8: MCP covers Claude, and the REST shapes are still growing (phases 5 and 6).
+- [x] Tests: parser (every node shape, edge style, labels, chains, subgraphs, each unsupported construct), Mermaid round trip, layout determinism and no overlaps, MCP tools against a test database.
 
 ### Frontend
 
-- [ ] SSE client: merge events, skip own `origin`, apply `batch` events in one frame, reload on `resync` or reconnect, flag (never overwrite) items being edited locally.
-- [ ] Brief highlight on items Claude created or changed.
-- [ ] Revisions panel per item: list, preview, restore. Makes "undo what Claude did" one click.
+- [x] SSE client: merge events, skip own `origin`, apply `batch` events in one frame, reload on `resync` or reconnect, flag (never overwrite) items being edited locally.
+- [x] Brief highlight on items Claude created or changed.
+- [x] Revisions panel per item: list, preview, restore. Makes "undo what Claude did" one click.
 
 ### Connect Claude Code
 
-- [ ] `board token create --name claude-mcp --scope admin --actor claude`.
-- [ ] `claude mcp add --transport http board https://<board-domain>/mcp --header "Authorization: Bearer …"`.
-- [ ] Try: "draw the checkout flow for a booking site on board X", then tidy it by hand; "read the flow I drew and suggest missing steps".
+- [x] `board token create --name claude-mcp --scope admin --actor claude`.
+- [x] `claude mcp add --transport http board https://<board-domain>/mcp --header "Authorization: Bearer …"`.
+- [x] Try: "draw the checkout flow for a booking site on board X", then tidy it by hand; "read the flow I drew and suggest missing steps".
+
+**Status:** done (2026-11-06), except the two deferred items above. Notes:
+
+- Every REST item and connector write now runs through the batch machinery, so REST, the UI and MCP publish identical live events.
+- MCP tools: `list_boards`, `create_board`, `update_board`, `get_board`, `get_item`, `search`, `add_items`, `draw_flow`, `get_flow`, `update_item`, `set_geometry`, `move_items_to_board`, `delete_items`, `connect`, `update_connector`, `delete_connector`, `list_revisions`, `restore_revision`.
+- `/mcp` accepts only `localhost`, `127.0.0.1` and the `public_origin` host (rmcp's DNS-rebinding guard).
+- Fixed while testing: connectors to a deleted item stayed on screen; and a live update arriving while someone was editing an item would take the new version and let their save overwrite the other change silently. Now their save conflicts and shows the banner.
+- Tests: 10 new integration tests (`tests/live.rs`: events, flows, MCP over JSON-RPC), Mermaid parser and layout unit tests, and `e2e/live.mjs` (12 browser checks).
 
 **Done when:** Claude draws a laid-out flowchart in a frame from one prompt, it appears live in your open tab, and you can undo it from the revisions panel and trash.
 

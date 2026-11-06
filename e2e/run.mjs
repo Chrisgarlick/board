@@ -135,12 +135,16 @@ await page2.goto(`${BASE}/boards/${boardId}`);
 await page2.locator(".card").first().waitFor();
 const note1 = page.locator(".card").filter({ hasText: "Kickoff notes" });
 const note2 = page2.locator(".card").filter({ hasText: "Kickoff notes" });
+// Tab two starts editing; while it's open, tab one saves a change. The live
+// update must not overwrite tab two's editor, and tab two's save must
+// conflict rather than silently replace tab one's text.
+await page2.waitForTimeout(500); // let tab two's live updates connect
+await note2.locator(".note-view").dblclick();
 await note1.locator(".note-view").dblclick();
 await page.keyboard.press("ControlOrMeta+End");
 await page.keyboard.type("\nEdited in tab one.");
 await page.keyboard.press("Escape");
-await page.waitForTimeout(1200);
-await note2.locator(".note-view").dblclick();
+await page.waitForTimeout(1500);
 await page2.keyboard.press("ControlOrMeta+End");
 await page2.keyboard.type("\nEdited in tab two.");
 await page2.keyboard.press("Escape");
