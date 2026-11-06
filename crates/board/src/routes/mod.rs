@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod images;
+pub mod passkeys;
 pub mod schema;
 
 use crate::app::AppState;
@@ -84,6 +85,9 @@ pub fn api(state: AppState) -> Router<AppState> {
         .route("/tables/{id}/restore/{rev}", post(schema::restore_table))
         .route("/items/{id}/er", get(schema::item_er))
         .route("/boards/{id}/model", get(get_model))
+        .route("/passkeys", get(passkeys::list).post(passkeys::register))
+        .route("/passkeys/options", post(passkeys::creation_options))
+        .route("/passkeys/{id}", axum::routing::delete(passkeys::remove))
         .route("/search", get(search_items))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
@@ -96,6 +100,8 @@ pub fn public() -> Router<AppState> {
         .route("/login/{code}", get(login))
         .route("/i/{file}", get(images::public_image))
         .route("/api/model.schema.json", get(model_schema))
+        .route("/auth/passkey/options", post(passkeys::request_options))
+        .route("/auth/passkey/login", post(passkeys::login))
 }
 
 pub fn ctx(state: &AppState, caller: Caller) -> Ctx {

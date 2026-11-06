@@ -1,7 +1,7 @@
 # Planning Board: Technical Spec (Rust)
 
 Working name: **Board** (rename freely).
-Status: draft v0.8. Section 16 lists what changed in each version. The build order lives in `plan.md`.
+Status: draft v0.9. Section 16 lists what changed in each version. The build order lives in `plan.md`.
 
 ---
 
@@ -1120,6 +1120,10 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 ---
 
 ## 16. Changes
+
+### v0.9
+
+- **Passkeys** for signing in to the UI (WebAuthn, ES256 only, usernameless, user verification required), so Board works on a phone without a link from the server. Added from a signed-in browser only, never with an API token. `board login` stays as the recovery path. Implemented on `p256` and `ciborium` (no OpenSSL, so the static build still works).
 
 ### v0.8
 

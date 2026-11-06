@@ -36,6 +36,11 @@ toolchain.
 
 On the droplet (`ssh -i ~/.ssh/keys/kritano root@167.71.134.177`):
 
+Sign in with a passkey (Face ID, Touch ID, a fingerprint). The first time,
+there's no passkey yet, so get in with a one-time link and add one from the
+board list (Passkeys). After that, `board login` is only the way back in if
+every passkey is lost.
+
 ```sh
 B="sudo -u board board --config /var/lib/board/board.toml"
 $B login                                                     # one-time link for your browser

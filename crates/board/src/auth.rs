@@ -32,7 +32,7 @@ const TOKEN_PREFIX: &str = "brd_";
 /// Don't write `last_used_at` on every request; once an hour is plenty.
 const TOUCH_EVERY: TimeDelta = TimeDelta::hours(1);
 
-fn random_secret() -> String {
+pub(crate) fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     rand::fill(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
@@ -186,16 +186,21 @@ pub async fn redeem_login_code(
     if used.rows_affected() == 0 {
         return Ok(None);
     }
+    let session = start_session(&mut tx, now).await?;
+    tx.commit().await?;
+    Ok(Some(session))
+}
 
+/// Start a UI session (30 days). Returns the cookie value.
+pub async fn start_session(conn: &mut sqlx::SqliteConnection, now: Timestamp) -> AppResult<String> {
     let session = random_secret();
     sqlx::query("INSERT INTO sessions (id_hash, created_at, expires_at) VALUES (?, ?, ?)")
         .bind(hash(&session))
         .bind(now.to_db())
         .bind(now.plus(TimeDelta::days(SESSION_DAYS)).to_db())
-        .execute(&mut *tx)
+        .execute(conn)
         .await?;
-    tx.commit().await?;
-    Ok(Some(session))
+    Ok(session)
 }
 
 pub async fn end_session(pool: &SqlitePool, session: &str) -> AppResult<()> {
@@ -241,6 +246,10 @@ pub async fn purge_expired(pool: &SqlitePool, now: Timestamp) -> AppResult<()> {
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM login_codes WHERE expires_at <= ?")
+        .bind(now.to_db())
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM passkey_challenges WHERE expires_at <= ?")
         .bind(now.to_db())
         .execute(pool)
         .await?;

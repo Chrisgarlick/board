@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { api } from "../api";
+import { AccountPanel, usePasskeys } from "./AccountPanel";
 import { navigate } from "../router";
 import { report } from "../store";
 import { ago } from "../time";
@@ -15,6 +16,8 @@ export function BoardList() {
   const [newTitle, setNewTitle] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [account, setAccount] = useState(false);
+  const [passkeys, refreshPasskeys] = usePasskeys();
 
   function refresh(query = q, showArchived = archived) {
     api
@@ -64,7 +67,25 @@ export function BoardList() {
             Create board
           </button>
         </form>
+        <button
+          type="button"
+          class={`text-button${account ? " is-active" : ""}`}
+          aria-pressed={account}
+          onClick={() => setAccount(!account)}
+        >
+          Passkeys
+        </button>
       </header>
+
+      {passkeys && passkeys.length === 0 && !account && (
+        <p class="notice">
+          Add a passkey so you can sign in on your phone and other devices, without a link from the server.{" "}
+          <button type="button" onClick={() => setAccount(true)}>
+            Add a passkey
+          </button>
+        </p>
+      )}
+      {account && <AccountPanel list={passkeys} refresh={refreshPasskeys} onClose={() => setAccount(false)} />}
 
       <div class="boards-tools">
         <input

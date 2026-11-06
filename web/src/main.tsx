@@ -2,9 +2,10 @@
 
 import { render } from "preact";
 import { signal } from "@preact/signals";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 import { api, ApiError } from "./api";
+import { explain, passkeysSupported, signInWithPasskey } from "./passkeys";
 import { BoardList } from "./pages/BoardList";
 import { BoardView } from "./pages/BoardView";
 import { navigate, path, route } from "./router";
@@ -40,18 +41,47 @@ function StatusLine() {
   );
 }
 
+function SignIn() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithPasskey();
+      await checkAuth();
+    } catch (err) {
+      setError(explain(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <main class="sign-in">
+      <h1>Board</h1>
+      {passkeysSupported() ? (
+        <button type="button" class="sign-in-button" disabled={busy} onClick={() => void go()}>
+          {busy ? "Waiting for your passkey…" : "Sign in with a passkey"}
+        </button>
+      ) : (
+        <p>This browser doesn't support passkeys.</p>
+      )}
+      {error && (
+        <p class="sign-in-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p class="sign-in-help">
+        No passkey yet? Run <code>board login</code> on the server and open the link it prints (it works once, within
+        10 minutes), then add a passkey from the board list.
+      </p>
+    </main>
+  );
+}
+
 function App() {
   if (auth.value === "checking") return null;
-  if (auth.value === "out")
-    return (
-      <main class="page-message">
-        <h1>Log in to Board</h1>
-        <p>
-          On the server, run <code>board login</code> and open the link it prints. The link works once, within 10
-          minutes.
-        </p>
-      </main>
-    );
+  if (auth.value === "out") return <SignIn />;
   if (auth.value === "offline")
     return (
       <main class="page-message">

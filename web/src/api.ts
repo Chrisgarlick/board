@@ -118,6 +118,12 @@ export async function downloadImage(
 
 export const api = {
   me: () => request<{ actor: string; scope: string }>("GET", "/me"),
+  passkeys: () =>
+    request<{ passkeys: { id: string; name: string; created_at: string; last_used_at: string | null }[] }>(
+      "GET",
+      "/passkeys",
+    ),
+  removePasskey: (id: string) => request<void>("DELETE", `/passkeys/${encodeURIComponent(id)}`),
   logout: () => request<void>("POST", "/logout"),
 
   listBoards: (q: string, archived: boolean) =>

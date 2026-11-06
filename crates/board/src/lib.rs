@@ -19,6 +19,7 @@ mod export;
 pub mod flow;
 pub mod mcp;
 pub mod model;
+pub mod passkey;
 pub mod render;
 pub mod routes;
 pub mod schema;

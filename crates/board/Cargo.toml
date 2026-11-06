@@ -43,6 +43,8 @@ ttf-parser = "0.25.1"
 # and no raster images (a rendered SVG never loads external content).
 resvg = { version = "0.49.0", default-features = false, features = ["text"] }
 usvg = { version = "0.49.0", default-features = false, features = ["text", "writer"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
+ciborium = "0.2.2"
 
 [dev-dependencies]
 http-body-util = "0.1.5"
