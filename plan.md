@@ -79,7 +79,7 @@ Phases 0–8 are this repo. Two tracks run outside it: **Typeset** changes (need
 Board runs on the Kritano droplet next to Motion (`deploy/README.md`); `deploy/deploy.sh` builds and installs it.
 
 - [x] Release build (GitHub Actions, static musl binary); systemd unit; nginx with certbot TLS at `https://board.kritano.com`; bound to localhost only. Deployed 2026-11-06.
-- [ ] Create your login with `board login`; create a `laptop` admin token for scripts (yours: tokens are shown once).
+- [x] Sign in: passkeys (added 2026-11-06), with `board login` as the recovery path. A `laptop` admin token for scripts is optional.
 - [x] Nightly `scripts/backup.sh` via a systemd timer, 14 days kept on the droplet. Still yours: an off-droplet `BACKUP_REMOTE`, and one test restore.
 
 **Status:** code done (2026-11-06); deploy is yours to run. Also added beyond the list:
@@ -252,11 +252,11 @@ Board runs on the Kritano droplet next to Motion (`deploy/README.md`); `deploy/d
 - [x] `GET /api/boards/{id}/model` with `ETag` and 304; `GET /api/model.schema.json` (unauthenticated).
 - [x] MCP `get_board_model`.
 - [x] `board pull <board-id> --into <dir>`: writes `board-model.json`, pretty-printed with stable key order.
-- [ ] Publish `board-model` for Design: tag a release so Design can use it as a git dependency (if Rust), or rely on the JSON Schema.
-- [ ] Create a `read` token for Design (`--name design --scope read --actor api`).
+- [x] Publish `board-model` for Design (`board-model-v0.1.0`): tag a release so Design can use it as a git dependency (if Rust), or rely on the JSON Schema.
+- [x] Create a `read` token for Design (`--name design --scope read --actor api`).
 - [x] Tests: ordering, label defaults, hashes change only when a column's definition does, flow extraction, multiple-sitemap warning, ETag stability.
 
-**Status:** done (2026-11-06), apart from two steps that need you: pushing the `board-model-v0.1.0` tag (done with the phase commit) and creating Design's read token on the server (`board token create --name design --scope read --actor api`). Notes:
+**Status:** done (2026-11-06). Notes:
 
 - `board-model` now holds the whole model: `BoardModel`, `ModelTable`, `ModelColumn` (the column plus `hash`), `Feature`, `Flow`, `FlowNode`, `FlowEdge`, `Note`, `FeatureStatus`.
 - Column hashes are the first 8 hex characters of a SHA-256 over the column without its id and without the names filled in on read. Renaming a referenced table doesn't change the hash; changing the column does.
