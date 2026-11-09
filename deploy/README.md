@@ -62,12 +62,17 @@ claude mcp add --transport http board https://board.kritano.com/mcp \
 Board renders PDFs through Typeset with its own Clients caller key. Once:
 
 ```sh
-# on the droplet: a caller key for Board (it may render for any client)
-KEY=$(clients-admin keys create board --kind caller)
+# on the droplet: a caller key for Board (it may render for any client).
+# Only the ck_… part is kept: Clients prints the key with other text around it.
+KEY=$(clients-admin keys create board --kind caller 2>/dev/null | grep -o 'ck_[A-Za-z0-9_-]*' | head -n 1)
+echo ${#KEY}        # about 70; 0 means it wasn't captured: stop here
 printf 'typeset_url = "https://typeset.chrisgarlick.com"\ntypeset_key = "%s"\n' "$KEY" \
   >> /var/lib/board/board.toml && unset KEY
-systemctl restart board
+grep -c '^typeset_key = "ck_[^"]*"$' /var/lib/board/board.toml   # should print 1
+systemctl restart board && systemctl is-active board
 ```
+
+The key never appears on screen or in your shell history. If something goes wrong, revoke it (`clients-admin keys revoke <id>`), delete the `typeset_` lines from `board.toml` and start again.
 
 Then set each board's client (Settings or the PDF panel) so its PDF is in their brand.
 
