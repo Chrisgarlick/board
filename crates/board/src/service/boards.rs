@@ -20,6 +20,8 @@ pub struct Board {
     pub title: String,
     pub description: Option<String>,
     pub stack: Option<String>,
+    /// The client this board is for: a slug in Clients. PDFs use its brand.
+    pub client: Option<String>,
     pub schema_version: i64,
     pub archived: bool,
     pub created_at: String,
@@ -45,7 +47,7 @@ pub struct FullBoard {
     pub tables: Vec<Table>,
 }
 
-const COLS: &str = "b.id, b.title, b.description, b.stack, b.schema_version, b.archived, b.created_at, b.updated_at";
+const COLS: &str = "b.id, b.title, b.description, b.stack, b.client, b.schema_version, b.archived, b.created_at, b.updated_at";
 
 pub async fn list(
     conn: &mut SqliteConnection,
@@ -125,21 +127,25 @@ pub struct NewBoard {
     pub description: Option<String>,
     #[serde(default)]
     pub stack: Option<String>,
+    #[serde(default)]
+    pub client: Option<String>,
 }
 
 pub async fn create(conn: &mut SqliteConnection, ctx: Ctx, new: NewBoard) -> AppResult<Board> {
     let title = check_title(&new.title)?;
     let description = check_optional("description", new.description, MAX_DESCRIPTION_CHARS)?;
     let stack = check_optional("stack", new.stack, MAX_STACK_CHARS)?;
+    let client = check_client(new.client)?;
     let id = new_id();
     let now = ctx.now.to_db();
     sqlx::query(
-        "INSERT INTO boards (id, title, description, stack, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO boards (id, title, description, stack, client, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(title)
     .bind(description)
     .bind(stack)
+    .bind(client)
     .bind(&now)
     .bind(&now)
     .execute(&mut *conn)
@@ -157,6 +163,8 @@ pub struct BoardPatch {
     pub description: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
     pub stack: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub client: Option<Option<String>>,
     #[serde(default)]
     pub archived: Option<bool>,
 }
@@ -184,13 +192,18 @@ pub async fn update(
         Some(s) => check_optional("stack", s, MAX_STACK_CHARS)?,
         None => current.stack,
     };
+    let client = match patch.client {
+        Some(c) => check_client(c)?,
+        None => current.client,
+    };
     let archived = patch.archived.unwrap_or(current.archived);
     sqlx::query(
-        "UPDATE boards SET title = ?, description = ?, stack = ?, archived = ?, updated_at = ? WHERE id = ?",
+        "UPDATE boards SET title = ?, description = ?, stack = ?, client = ?, archived = ?, updated_at = ? WHERE id = ?",
     )
     .bind(title)
     .bind(description)
     .bind(stack)
+    .bind(client)
     .bind(archived)
     .bind(ctx.now.to_db())
     .bind(id)
@@ -222,6 +235,25 @@ fn check_title(title: &str) -> AppResult<String> {
         ));
     }
     Ok(title.to_string())
+}
+
+/// A client's slug in Clients: lowercase letters, digits and dashes.
+fn check_client(value: Option<String>) -> AppResult<Option<String>> {
+    let value = value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(v) = &value
+        && (v.len() > 64
+            || !v
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    {
+        return Err(AppError::invalid(
+            "client",
+            "a client is its slug in Clients: lowercase letters, digits and dashes",
+        ));
+    }
+    Ok(value)
 }
 
 fn check_optional(field: &str, value: Option<String>, max: usize) -> AppResult<Option<String>> {

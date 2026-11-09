@@ -13,9 +13,6 @@ pub mod content;
 pub mod db;
 pub mod error;
 pub mod events;
-// The Typeset mapper is wired in during phase 7; until then only its tests use it.
-#[allow(dead_code)]
-mod export;
 pub mod flow;
 pub mod mcp;
 pub mod model;
@@ -26,3 +23,4 @@ pub mod schema;
 pub mod service;
 pub mod signing;
 pub mod types;
+pub mod typeset;

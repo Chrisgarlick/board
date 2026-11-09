@@ -33,9 +33,14 @@ pub struct Config {
     /// base64url-encoded 32 random bytes. Signs export and image URLs.
     #[serde(default)]
     pub server_secret: Option<String>,
-    /// Typeset base URL, for push-mode exports (phase 7).
+    /// Typeset's base URL, e.g. `https://typeset.chrisgarlick.com`. PDFs
+    /// are off without it.
     #[serde(default)]
     pub typeset_url: Option<String>,
+    /// Board's caller key for Typeset, from Clients (`ck_…`). Keep this file
+    /// private: Board sets it to 0600 on first run.
+    #[serde(default)]
+    pub typeset_key: Option<String>,
 }
 
 fn default_bind() -> SocketAddr {

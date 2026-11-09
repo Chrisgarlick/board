@@ -263,6 +263,9 @@ pub struct ModelBoard {
     /// The stack this job uses, e.g. "Laravel + MySQL".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
+    /// The client this board is for: their slug in Clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

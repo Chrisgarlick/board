@@ -57,6 +57,20 @@ claude mcp add --transport http board https://board.kritano.com/mcp \
   --header "Authorization: Bearer brd_…"
 ```
 
+## Planning PDFs (Typeset)
+
+Board renders PDFs through Typeset with its own Clients caller key. Once:
+
+```sh
+# on the droplet: a caller key for Board (it may render for any client)
+KEY=$(clients-admin keys create board --kind caller)
+printf 'typeset_url = "https://typeset.chrisgarlick.com"\ntypeset_key = "%s"\n' "$KEY" \
+  >> /var/lib/board/board.toml && unset KEY
+systemctl restart board
+```
+
+Then set each board's client (Settings or the PDF panel) so its PDF is in their brand.
+
 ## Day to day
 
 ```sh

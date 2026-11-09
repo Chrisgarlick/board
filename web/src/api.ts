@@ -83,6 +83,38 @@ export interface Geometry {
   locked?: boolean;
 }
 
+/** What goes in a planning PDF and on its cover (crates/board/src/typeset.rs). */
+export interface PdfOptions {
+  item_ids?: string[];
+  title?: string;
+  subtitle?: string;
+  recipient?: string;
+  client?: string;
+}
+
+/** Render the board's planning PDF through Typeset and save it. */
+export async function downloadPdf(boardId: string, options: PdfOptions): Promise<void> {
+  const res = await fetch(`/api/boards/${boardId}/pdf`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-Client-Id": CLIENT_ID },
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ApiErrorBody | null;
+    throw new ApiError(res.status, body ?? { error: "http", message: `The PDF failed (${res.status})` });
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "board.pdf";
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /**
  * Fetch a rendered image (spec 8.2) and save it: a single item (a frame with
  * its contents) or a selection.
@@ -132,7 +164,7 @@ export const api = {
       `/boards?archived=${archived}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
     ),
   createBoard: (title: string) => request<Board>("POST", "/boards", { title }),
-  updateBoard: (id: string, patch: Partial<Pick<Board, "title" | "archived" | "description" | "stack">>) =>
+  updateBoard: (id: string, patch: Partial<Pick<Board, "title" | "archived" | "description" | "stack" | "client">>) =>
     request<Board>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => request<void>("DELETE", `/boards/${id}`),
   getBoard: (id: string) => request<FullBoard>("GET", `/boards/${id}`),
@@ -151,6 +183,15 @@ export const api = {
     request<{ url: string; expires_at: string }>("POST", `/items/${id}/image-url`, { format }),
   restoreRevision: (id: string, rev: number, version: number) =>
     request<Item>("POST", `/items/${id}/restore/${rev}`, { version }),
+
+  pdfProof: (boardId: string, options: PdfOptions) =>
+    request<{ pages: number; images: string[]; warnings: string[] }>("POST", `/boards/${boardId}/pdf`, {
+      ...options,
+      proof: true,
+    }),
+  pdfLink: (boardId: string, options: PdfOptions) =>
+    request<{ url: string; expires_at: string }>("POST", `/boards/${boardId}/pdf-link`, options),
+  typesetClients: () => request<{ slug: string; name: string }[]>("GET", "/typeset/clients"),
 
   createTable: (boardId: string, body: { name: string; definition: TableDefinition; item_id?: string }) =>
     request<TableWritten>("POST", `/boards/${boardId}/tables`, body),

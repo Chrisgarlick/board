@@ -239,6 +239,7 @@ pub fn board_model(
             title: board.title.clone(),
             description: board.description.clone(),
             stack: board.stack.clone(),
+            client: board.client.clone(),
         },
         schema_version: board.schema_version,
         tables: model_tables,

@@ -12,6 +12,7 @@ import { addNext } from "../canvas/quickflow";
 import { StyleBar } from "../canvas/StyleBar";
 import { TOOL_KEYS, Toolbar } from "../canvas/Toolbar";
 import { HistoryPanel } from "../canvas/HistoryPanel";
+import { PdfPanel } from "../canvas/PdfPanel";
 import { SchemaPanel } from "../canvas/SchemaPanel";
 import { SettingsPanel } from "../canvas/SettingsPanel";
 import { TrashPanel } from "../canvas/TrashPanel";
@@ -54,8 +55,9 @@ const NUDGE_BIG = 10;
 
 export function BoardView({ id }: { id: string }) {
   const [state, setState] = useState<Load>({ kind: "loading" });
-  const [panel, setPanel] = useState<"trash" | "schema" | "settings" | null>(null);
-  const toggle = (p: "trash" | "schema" | "settings") => setPanel(panel === p ? null : p);
+  type Panel = "trash" | "schema" | "settings" | "pdf";
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const toggle = (p: Panel) => setPanel(panel === p ? null : p);
   const [adding, setAdding] = useState<{ sx: number; sy: number; x: number; y: number } | null>(null);
   const mat = useRef<HTMLDivElement>(null);
   const spaceDown = useRef(false);
@@ -320,6 +322,7 @@ export function BoardView({ id }: { id: string }) {
         {(
           [
             ["schema", "Schema"],
+            ["pdf", "PDF"],
             ["settings", "Settings"],
             ["trash", "Trash"],
           ] as const
@@ -429,6 +432,7 @@ export function BoardView({ id }: { id: string }) {
       {panel === "trash" && b && <TrashPanel boardId={b.id} onClose={() => setPanel(null)} />}
       {panel === "schema" && <SchemaPanel onClose={() => setPanel(null)} />}
       {panel === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
+      {panel === "pdf" && <PdfPanel onClose={() => setPanel(null)} />}
       {historyFor.value && !panel && <HistoryPanel id={historyFor.value} />}
     </div>
   );

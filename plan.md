@@ -274,17 +274,22 @@ Board runs on the Kritano droplet next to Motion (`deploy/README.md`); `deploy/d
 
 ## Phase 7: Typeset and the client PDF (M7)
 
-**Blocked until Typeset's real input format is known (§15 Q1).** Update §8.4 to match it first.
+**Goal:** a client-ready planning PDF in the client's brand, and a document that joins with Design's into one proposal.
 
-- [ ] Move `typeset-doc` to the Typeset repo; Board depends on it by git tag. Add `contract_version`, the `image` block, `alt`/`width` on `svg`, `Unknown` blocks, and the `sources` request shape (§8.4, §14).
-- [ ] Update `export.rs` to the v0.6 mapper (§8.6, §14): items instead of cards, render function argument, frame and feature mappers, rendered ER SVG, type formatting, heading offsets, duplicate removal, `item_ids` with `serde(default)`.
-- [ ] Export selection rules: frames and cards, reading order, frames followed by their cards (§6 Export selection).
-- [ ] Signed Typeset URLs (§3.3): `POST /api/boards/{id}/typeset-url`, `GET /api/boards/{id}/typeset`, MCP `get_typeset_url`, `get_typeset_document`.
-- [ ] Push mode: `POST /api/boards/{id}/export/typeset` (`?dry=1` for JSON), `typeset_client.rs`, UI Export to PDF with a card/frame picker and `meta` fields.
-- [ ] Diagram card SVG cache (`PUT /svg`, version check, light theme), as fallback for Mermaid-only diagrams (§4.4).
-- [ ] Tests: the original 8 updated plus the new ones listed in §14.
+Typeset's real input turned out to be its JSON document (schema 2), which Design already posts with a Clients caller key. So the planned pull mode, signed Typeset URLs, `sources` input and `typeset-doc` crate were dropped (spec §8.3).
 
-**Done when:** Typeset produces a planning PDF from a board via a signed URL, with flowcharts and ER diagrams as sharp vector images, and Claude can ask for it.
+- [x] `typeset.rs`: board → Typeset document (spec §8.4): selection and reading order, frames with their drawings then their cards, features, schemas with ER diagrams and column tables, sitemaps, notes, checklists; escaping and heading levels for PDF/UA; Typeset's limits as warnings.
+- [x] Drawings embedded as SVG data URIs (text as paths), PNG when over 5 MB; signed image links for documents that get passed on.
+- [x] `POST /api/boards/{id}/pdf` (and `proof`), signed PDF links (`/p/{board}.pdf`), `GET /api/boards/{id}/typeset`, `GET /api/typeset/clients`.
+- [x] `boards.client` (a Clients slug): the PDF's brand, in board settings, and in the board model.
+- [x] MCP `export_pdf` and `get_typeset_document`.
+- [x] UI: PDF panel (brand, cover, contents picker, page preview, download, link).
+- [x] Typeset: `checklist` and `tree` components, tall images fit the page (branch `board-checklist`).
+- [x] Removed the obsolete `typeset-doc` crate and `export.rs`.
+- [x] Tests: mapper unit tests, `tests/pdf.rs` against a fake Typeset, `e2e/pdf.mjs` (11 checks), Typeset's own tests and gallery snapshots, and a real render of a sample board through Typeset's theme.
+- [ ] Merge and deploy Typeset's branch; create Board's caller key in Clients and set `typeset_url`/`typeset_key` on the droplet (yours).
+
+**Done when:** Typeset produces a planning PDF from a board in the client's brand, with flowcharts and ER diagrams as sharp vector images, and Claude can ask for it.
 
 ---
 
@@ -300,19 +305,9 @@ Board runs on the Kritano droplet next to Motion (`deploy/README.md`); `deploy/d
 
 ## Outside this repo
 
-### Typeset track (needed for phase 7)
+### Typeset track
 
-In order (§8.5):
-
-1. `source` and `sources` input with an allow-list (Board and Design domains), timeouts and size caps.
-2. `markdown` block.
-3. `svg` block with sanitising and `width`.
-4. `image` block (PNG/JPEG, allow-listed fetch, size caps).
-5. `table` block.
-6. `tree` and `checklist` blocks.
-7. `planning-doc` template; later a `proposal` template.
-8. `contract_version` check and `Unknown` block handling.
-9. Raised body limit.
+Done on Typeset's `board-checklist` branch: `checklist` and `tree` components, and tall images scaled to fit the page. Everything else Board needs (JSON input, data URI images, `page` and `part` blocks, `contents`) Typeset already had.
 
 ### Design track (after phase 6)
 
@@ -321,7 +316,7 @@ What Design needs to do to use Board (§9):
 1. Read `/api/boards/{id}/model` server-side with the `read` token; poll with `If-None-Match`, or subscribe to SSE.
 2. Generate page frames from `pages` and components from `tables`; store `{ board_id, table_id, column_id, hash }` on each generated field and show changed / renamed / removed fields (§9.3).
 3. Embed Board drawings with signed image URLs.
-4. Expose its own Typeset document (screens as `image` blocks with signed URLs) so Typeset can join it with Board's into the client proposal PDF (§8.3).
+4. For the client proposal: join Board's document (`GET /api/boards/{id}/typeset?part=…`) with its own (`page` blocks for A4 frames) and render once (§8.3).
 
 ---
 

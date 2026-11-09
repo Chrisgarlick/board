@@ -11,8 +11,7 @@ checklists. One Rust binary and one SQLite file.
 
 ```
 crates/board         the app (server, CLI, embedded frontend)
-crates/board-model   Board's published read contract, for Design (phase 5+)
-crates/typeset-doc   Typeset document contract; moves to the Typeset repo in phase 7
+crates/board-model   Board's published read contract, for Design
 web/                 frontend source; web/dist is served by the app
 ```
 

@@ -37,11 +37,20 @@ pub struct Res {
 
 impl TestApp {
     pub async fn new() -> Self {
+        Self::with_config("").await
+    }
+
+    /// A test app with extra lines in board.toml (e.g. Typeset settings).
+    #[allow(dead_code)]
+    pub async fn with_config(extra: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("board.toml");
         std::fs::write(
             &config_path,
-            format!("database = \"{}\"\n", dir.path().join("board.db").display()),
+            format!(
+                "database = \"{}\"\n{extra}\n",
+                dir.path().join("board.db").display()
+            ),
         )
         .unwrap();
         let config = Config::load_or_init(&config_path).unwrap();

@@ -1,7 +1,7 @@
 # Planning Board: Technical Spec (Rust)
 
 Working name: **Board** (rename freely).
-Status: draft v0.9. Section 16 lists what changed in each version. The build order lives in `plan.md`.
+Status: draft v1.0. Section 16 lists what changed in each version. The build order lives in `plan.md`.
 
 ---
 
@@ -188,18 +188,19 @@ CREATE TABLE api_tokens (
 - Tokens are `brd_` plus 32 random bytes in base64url (the prefix lets secret scanners spot a leaked token), shown once on creation, stored as a SHA-256 hash and looked up by that hash. An attacker can't steer the hash of a guess, so lookup timing reveals nothing useful.
 - CLI: `board token create --name design --scope read --actor api`, `board token list`, `board token revoke <id>`.
 
-### 3.3 Signed export URLs (Typeset pull)
+### 3.3 Signed links (images and PDFs)
 
-Typeset fetches with short-lived signed URLs for one board, so no long-lived secret passes through it:
+Images and PDFs can be shared without a login through signed, expiring links:
 
 ```
-GET /api/boards/{id}/typeset?items=a,b,c&page_breaks=1&exp=1730822400&sig=<base64url>
+{public_origin}/i/{item_id}.png?scale=2&exp=1730822400&sig=<base64url>
+{public_origin}/p/{board_id}.pdf?o=<options>&exp=1730822400&sig=<base64url>
 ```
 
 - `sig = HMAC-SHA256(server_secret, canonical string)`, where the canonical string is the path plus all query parameters except `sig`, sorted by key.
-- `exp` is a Unix timestamp; default lifetime 10 minutes, max 1 hour.
-- Signed URLs are minted with `POST /api/boards/{id}/typeset-url` (admin) or the MCP tool `get_typeset_url`. Claude can hand a URL to Typeset without ever seeing a secret.
-- `server_secret` is 32 random bytes in the config file, generated on first run. Rotating it invalidates every outstanding URL.
+- `exp` is a Unix timestamp; links last 7 days by default, at most 90.
+- A link renders when it's opened, so it shows the board as it is then: it's a link to the drawing or plan, not a snapshot.
+- `server_secret` is 32 random bytes in the config file, generated on first run. Rotating it invalidates every outstanding link.
 
 ### 3.4 Network
 
@@ -647,9 +648,10 @@ Table writes return `{ table, schema_version, warnings?, updated?, item? }`: `up
 |---|---|---|
 | GET | `/api/boards/{id}/model` | **Board model** for Design (section 9). `ETag`; `If-None-Match` returns 304 |
 | GET | `/api/model.schema.json` | JSON Schema for the board model |
-| POST | `/api/boards/{id}/typeset-url` | Mint a signed pull URL (section 3.3). Body: same options as the query below |
-| GET | `/api/boards/{id}/typeset` | **Ready-made Typeset document** (section 8). Signed URL or admin/read auth. Query: `items=a,b,c`, `page_breaks=1`, `title`, `subtitle`, `client`, `author`, `version`, `template` |
-| POST | `/api/boards/{id}/export/typeset` | Push mode: body is `ExportOptions`; renders via Typeset and returns the PDF (`?dry=1` returns the JSON) |
+| POST | `/api/boards/{id}/pdf` | **The planning PDF**, rendered by Typeset (section 8.3). Body: `item_ids?`, `title?`, `subtitle?`, `recipient?`, `author?`, `date?`, `client?`, `part?`, `print?`; `proof: true` returns page thumbnails and warnings instead |
+| POST | `/api/boards/{id}/pdf-link` | A signed link to the PDF (section 3.3), same options plus `days` |
+| GET | `/api/boards/{id}/typeset` | The board as a Typeset document (JSON), for joining with other documents. Query: `items=a,b,c`, cover fields, `part`, `images=links\|embedded` |
+| GET | `/api/typeset/clients` | The clients Board's Typeset key may render for (for the brand picker) |
 | GET | `/api/boards/{id}/export/folder` | Zip of markdown/JSON files and rendered images (escape hatch, no lock-in) |
 | GET | `/api/items/{id}/render.svg`, `/render.png` | Rendered images; see section 8.2 for these and the other image routes |
 
@@ -657,7 +659,7 @@ Table writes return `{ table, schema_version, warnings?, updated?, item? }`: `up
 
 The units of export are **frames** and **cards**. Loose shapes, stickies and text outside any frame aren't exported; put a drawing in a frame to include it.
 
-When `items` / `item_ids` is omitted or empty, the export includes every top-level frame and every card that isn't in a frame, in **reading order**: grouped into 200px bands by `y`, then sorted by `x` within a band. An exported frame includes its drawing and then the cards inside it (section 8.6). Duplicate ids in an explicit list are dropped after their first appearance. `template` must be one of the templates Typeset reports (initially just `planning-doc`).
+When `items` / `item_ids` is omitted or empty, the export includes every frame and every card that isn't in a frame, in **reading order**: grouped into 200px bands by `y`, then sorted by `x` within a band. An exported frame includes its drawing and then the cards inside it (section 8.4). An explicit list keeps its order; duplicate ids are dropped after their first appearance.
 
 ### Body limits
 
@@ -711,8 +713,8 @@ Mounted at `/mcp` (Streamable HTTP), bearer auth with an `admin` token whose `ac
 | `list_revisions` | `item_id` or `table_id` | |
 | `restore_revision` | `item_id` or `table_id`, `revision_id`, `version` | |
 | `get_board_model` | `board_id` | The same board model Design reads (section 9). Lets a Claude Code session in another project read the plan |
-| `get_typeset_document` | `board_id`, `item_ids?` | Returns the export payload for review |
-| `get_typeset_url` | `board_id`, `item_ids?`, `page_breaks?`, `meta?` | Signed pull URL to hand to Typeset, alone or as one of several `sources` (8.3) |
+| `get_typeset_document` | same as `export_pdf` | The Typeset document with signed image links, for joining with Design's before rendering one PDF |
+| `export_pdf` | `board_id`, `item_ids?`, cover fields, `client?`, `part?` | Renders a proof to check it works, then returns a signed PDF link (7 days), the page count and any warnings |
 | `get_item_image` | `item_id` (frame, schema card or diagram card), `format?` (`png` \| `svg`), `scale?` | Returns the PNG as image content, so Claude can see what it drew, plus a signed image URL |
 
 Rules:
@@ -780,100 +782,37 @@ What it renders:
 
 Signed image URLs use the same HMAC scheme as Typeset URLs (3.3) and work without a token, so Design, Typeset or an email can fetch them. They look like `{public_origin}/i/{item_id}.png?scale=2&exp=…&sig=…`. A signed URL renders the item as it is when fetched, not when signed; it's a link to the drawing, not a snapshot. A tampered or unsigned link gets 403, an expired one 410, and one whose item has been deleted 404.
 
-### 8.3 Typeset: entry points
+### 8.3 Typeset
 
-Typeset turns a board into a PDF. Board's document contains its own drawings as inline SVG, so Typeset never has to fetch images from Board or draw anything itself.
+Typeset (https://typeset.chrisgarlick.com) turns a structured JSON document (`"input_format": "json"`, `"schema": 2`: a frontmatter for the cover and `pages` of blocks) into a tagged PDF in a client's brand from Clients. Board uses it the same way Design does:
 
-**Pull (recommended default).** Typeset fetches the document from Board using a signed URL (section 3.3):
+- **Board pushes.** Board builds the document and posts it to Typeset's `/api/render` (or `/api/proof` for page thumbnails) with its own Clients caller key (`typeset_url` and `typeset_key` in `board.toml`). Typeset never calls Board.
+- **Drawings travel inside the document** as data URIs: SVG with text as paths (vector, needs no fonts), or PNG at 2× when an SVG is over Typeset's 5 MB per image. Typeset's limits (24 images, 25 MB per request) become warnings, never a failed render.
+- **The brand** is the board's `client` (a slug in Clients), or one given for the export.
+- **Combined documents** (the client proposal): `GET /api/boards/{id}/typeset` (or MCP `get_typeset_document`) returns the document with signed image links instead of data URIs, so it's small enough to pass around. Its pages can be joined with Design's (its A4 frames are `page` blocks), with `part` dividers between them, and rendered once. Typeset numbers the sections across parts and groups them on the contents page.
 
-```
-POST typeset/render
-{ "source": { "url": "https://board.example.com/api/boards/{id}/typeset?items=a,b,c&page_breaks=1&exp=…&sig=…" } }
-```
+### 8.4 Mapping
 
-**Several sources: the client proposal.** Typeset also accepts a list of sources and joins them into one PDF:
+| Board | Typeset blocks |
+|---|---|
+| Cover | `frontmatter`: the board's title (or the export's), the first line of its description as the subtitle, `eyebrow` "Planning document", `recipient`, `author`, `date` |
+| Four or more sections | A `contents` block first (or a `part` divider when `part` is given) |
+| Frame | `opener` (title, description as the intro), the drawing as a full-width `image` (alt text: the steps in reading order), then each card inside it under a level 3 heading |
+| Note card | `markdown`, its headings moved down so they sit under the card's (PDF/UA needs levels that don't skip) |
+| Checklist card | `checklist` per group, with group names as headings |
+| Feature card | `facts` (status, tables, pages), the summary as `markdown`, stories as a `bullet_list`, acceptance as a `checklist` |
+| Schema card | Its ER diagram as an `image`, then per table: a heading, the comment, and a `table` of Column, Type, Required, Key and Notes (references, enum values, defaults, generated values, comments) |
+| Sitemap card | A `tree` of pages: **title**, slug, purpose |
 
-```
-POST typeset/render
-{ "sources": [
-    { "url": "https://board.example.com/api/boards/{id}/typeset?…&sig=…" },
-    { "url": "https://design.kritano.com/api/projects/{id}/typeset?…&sig=…" } ],
-  "page_break_between_sources": true }
-```
+Plain text (titles, names, comments) is escaped for Typeset's inline markdown; card markdown is passed as written. Every top-level frame or card is one entry in `pages`, which Typeset treats as a section boundary.
 
-- Each source returns an ordinary `TypesetDocument`. `template` and `meta` come from the first source; later sources contribute only their blocks.
-- Board's document carries the planning (overview notes, features, sitemap, flows, data model). Design's document carries the designs as `image` blocks (screenshots Design takes of its own HTML frames). Board never calls Design and Design never calls Board for this; Typeset is the assembler.
-- Claude builds the request from `get_typeset_url` (Board's MCP) and Design's equivalent, then calls Typeset: "make the proposal PDF for Acme" is one tool call after two URL lookups.
+### 8.5 Changes made in Typeset
 
-**Push.** Board builds the document and POSTs it to Typeset (`POST /api/boards/{id}/export/typeset`). Useful from the UI's Export button, and when Typeset can't reach Board.
+Two components and a fix, all additive and covered by Typeset's gallery snapshots:
 
-### 8.4 Document contract (proposed)
-
-I don't have Typeset's current input format, so this is a proposal; `typeset_doc.rs` is its definition in code. It lives in a small `typeset-doc` crate owned by Typeset (section 2), which Design can depend on too.
-
-```json
-{
-  "contract_version": 1,
-  "template": "planning-doc",
-  "meta": { "title": "", "subtitle": "", "client": "", "author": "", "date": "2026-11-05", "version": "" },
-  "blocks": [ ]
-}
-```
-
-| Block | Fields | Used for |
-|---|---|---|
-| `heading` | `level`, `text` | Frame and card titles (h2), table names (h3) |
-| `markdown` | `text`, `heading_offset?` | Notes, feature summaries, frame descriptions, table comments |
-| `table` | `columns`, `rows`, `caption?`, `column_widths?` | Schema tables, indexes |
-| `tree` | `nodes` (`label`, `note?`, `children?`), `caption?` | Sitemaps |
-| `checklist` | `groups` (`title?`, `items` of `text`, `done`) | Checklists, acceptance criteria |
-| `svg` | `svg`, `alt?`, `caption?`, `width?` | Flows and drawings (frames), ER diagrams, Mermaid diagram cards |
-| `image` | `src`, `alt`, `caption?`, `width?` | Raster images: Design's screenshots. `src` is an `https` URL on an allow-listed host, or a `data:` URL |
-| `code` | `lang?`, `text`, `caption?` | Diagram source fallback |
-| `callout` | `variant`, `text` | Feature status |
-| `page_break` | none | Between sections (optional) |
-
-- `width` is `full` (default), `half`, or a fraction of the text width (`0.6`). Images and SVGs keep their aspect ratio; one taller than the page is scaled to fit the page.
-- `alt` is required on `image` and recommended on `svg`, so the PDF can be tagged for accessibility.
-
-**ER cardinality (used by the renderer).** For a foreign key, the child end is "many" unless the FK column is unique (one-to-one); the parent end is optional when the FK column is nullable. Referenced tables outside a schema card's view are drawn as stubs (name only).
-
-Evolution rules:
-
-- `contract_version` is bumped on any breaking change. Typeset rejects versions it doesn't know with a clear error.
-- Adding a block type is not breaking: Typeset deserialises unknown block types into an `Unknown` variant (`#[serde(other)]`), skips them, and logs a warning, so a newer Board or Design doesn't break an older Typeset.
-
-### 8.5 Changes needed in Typeset
-
-In order of value:
-
-1. **`source` and `sources` input.** Accept `{ "source": { "url" } }` or `{ "sources": [ … ] }` as an alternative to an inline document: fetch each with a short timeout and a size cap, join as in 8.3, then continue as normal. Only fetch from allow-listed hosts (your Board and Design domains) to avoid SSRF. No token handling needed; the URLs are signed.
-2. **`markdown` block.** Parse with `pulldown-cmark` and map to your existing primitives; apply `heading_offset`.
-3. **`svg` block.** Scale to `width`, keep aspect ratio. **Sanitise** (strip scripts, `foreignObject`, external references). Board's exported SVGs are generated and already safe, but Typeset's sanitising is the authoritative one.
-4. **`image` block.** PNG and JPEG; fetch `https` sources from allow-listed hosts only, with a per-image size cap (10 MB) and a per-document cap (100 MB).
-5. **`table` block.** Relative column widths, repeated header row across pages, no row splitting.
-6. **`tree` and `checklist` blocks.** Nested list with indentation first, polish later.
-7. **`planning-doc` template.** Cover from `meta`, running header with client and title, page numbers. A `proposal` template (same, with a more client-facing cover) when you need it.
-8. **`contract_version` check and `Unknown` block handling.**
-9. Raise the request body limit for large documents.
-
-Compared with v0.5, Typeset no longer needs `canvas` or `er` blocks: Board draws those itself.
-
-### 8.6 Mapper
-
-See `export.rs`. The mapper takes the board's items, connectors, tables and sitemap pages, plus a render function, so it can resolve ids and embed drawings. Summary:
-
-- frame → `heading` (frame title), optional `markdown` (description), `svg` (the frame rendered by Board, text as paths, without its title since the heading carries it), then each card inside the frame in reading order as below
-- note → `heading` + `markdown` (heading offset 1)
-- feature → `heading`, `callout` (status), `markdown` summary, stories as a `markdown` list, acceptance as a `checklist`, then a `markdown` line listing the tables and pages it touches
-- schema → `heading`, `svg` (ER diagram rendered by Board, or an override in push mode), then per table in the view: `heading` (h3), optional comment `markdown` (heading offset 3), `table` (Column / Type / Null / Default / Key / Notes), optional indexes `table`. The Type column shows the logical type with its extras (`decimal(10,2)`, `enum(pending, paid, shipped)`, `string(120)`), or `native_type` when set
-- sitemap → `heading` + `tree`
-- checklist → `heading` + `checklist`
-- diagram → `heading` + `svg` (cached browser SVG), or `code` fallback if no fresh SVG
-
-The mapper stays pure: it receives rendering as a function argument (`&dyn Fn(&Item) -> Option<String>`), so tests can pass a stub. "Today" is passed in, in the Europe/London time zone. `svg_overrides` go through the same SVG checks as `PUT /svg` before they reach the mapper.
-
----
+1. `checklist`: items ticked or not, with the boxes drawn (no font needs check-box glyphs), "(done)" in words for screen readers and greyscale print.
+2. `tree`: a nested list (the markdown path flattens nested lists and loses their parent items).
+3. Tall images are scaled to about three quarters of the page height, so a top-to-bottom flowchart is never clipped and stays with its heading.
 
 ## 9. Design integration
 
@@ -1067,48 +1006,14 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 
 ---
 
-## 14. Changes needed in the delivered code
+## 14. The delivered code
 
-`export.rs` and `typeset_doc.rs` were written against v0.2. To match v0.5:
-
-**New `board-model` crate**
-
-- Move the schema and sitemap types out of `export.rs` into it: `SchemaTable` (with `id`, `version`, `definition`), `SchemaColumn` (with `id`, logical `ColumnType` enum, `length`, `precision`, `scale`, `values`, `generated`, `label`, `native_type`, and `references` as `{ table_id, column_id }`), `SchemaIndex` (`column_ids`), `SitemapNode` (with `id`), `FeatureContent`, `Flow` (`nodes`, `edges`), and the `BoardModel` response type. Derive `schemars::JsonSchema`.
-
-**`export.rs`**
-
-- Replace `CardContent` with `ItemContent` (kinds from 5.1, with `Card(CardContent)` as one variant), plus `ItemStyle` and `ConnectorStyle`. `Card` becomes `Item` with geometry and `frame_id`; add `Connector`.
-- `CardContent`: `Schema` becomes `{ table_ids }`; add `Feature`; sitemap nodes carry `id`.
-- Add `#[serde(deny_unknown_fields)]` to every content and style struct.
-- Make `from_parts` go through `serde_path_to_error`, and add a `validate` step with the semantic checks from 5.5 that takes the board's tables and pages, returning a `ContentError { path, message }` plus warnings.
-- `to_typeset_document` takes items, connectors, tables and pages. `ExportOptions.card_ids` becomes `item_ids` with `#[serde(default)]`; the empty-means-all-in-reading-order rule lives in the service layer, which passes the resolved list in. Drop duplicate ids in the mapper.
-- The mapper takes a render function (8.6). Add the frame mapper (`svg` from the renderer, then member cards) and the feature mapper.
-- Schema mapper: emit the rendered ER `svg` instead of the cached browser SVG; use an override SVG only if one is supplied. Format the Type column from the logical type and extras, or `native_type`.
-- Table comment markdown: `heading_offset: 3`.
-- `schema_to_mermaid`: works from the board's tables; use the logical type name as the Mermaid type; emit `PK, FK` when a column is both; use `||--o|` for unique FKs and `|o--o{` for nullable FKs; draw referenced tables outside the view as empty entities.
-- New tests: unknown field rejected, error path present, style field on the wrong kind rejected, duplicate ids, id kept on rename-by-name, frame export uses the render function and includes member cards in reading order, feature mapping, type formatting.
-
-**`typeset_doc.rs`**
-
-- Add `contract_version: u32` to `TypesetDocument`.
-- Add the `Image` block (`src`, `alt`, `caption`, `width`) and `alt` / `width` on `Svg`. Remove the reserved v0.5 ideas of `Canvas` and `Er` blocks; Board renders those.
-- Add the `sources` request shape (`RenderRequest` with `source` or `sources`) so Board, Design and Typeset share it.
-- Add `#[serde(other)] Unknown` to `Block`.
-- Move into the `typeset-doc` crate in the Typeset repo.
-
-**New modules**
-
-- `flow/mermaid.rs`: the subset parser from 5.3, with errors naming the line, and the reverse (frame → Mermaid). Tests for every node shape, edge style, labels, chains, subgraphs and each unsupported construct; and a round-trip test.
-- `flow/layout.rs`: the layered layout from 5.3. Tests for determinism, cycles, `TB` vs `LR`, and no overlaps.
-- `render/`: SVG for frames, selections and ER diagrams; text wrapping; routing. Snapshot tests (`insta`) on the SVG output, the shared `fixtures/routing.json` cases, wrapping edge cases (long words, overflow to ellipsis), and a PNG smoke test.
-- `model.rs`: pure `board_model(board, items, connectors, tables) -> BoardModel`, with tests for ordering, label defaults, column hashes, flow extraction, multiple-sitemap warning and the ETag input.
-
----
+The `export.rs` mapper and `typeset_doc.rs` contract that came with v0.2 were written for a Typeset format that was only proposed. Typeset's real input is its JSON document (section 8.3), so both were removed in M7: the schema and sitemap types live in `board-model` (section 9), and the mapper is `typeset.rs`.
 
 ## 15. Open questions
 
-1. What does Typeset accept today? A real payload would let me replace the proposed contract with the actual one. **Blocks M7.**
-2. Pull mode requires Typeset to reach Board over HTTP. Are they on the same droplet or network, or does one sit behind auth that complicates this?
+1. ~~What does Typeset accept today?~~ **Decided:** its JSON document (`schema: 2`), as Design already uses (section 8.3).
+2. ~~How does Typeset reach Board?~~ **Decided:** it doesn't. Board pushes the document with drawings inside it, using its own Clients caller key.
 3. ~~Per-client folders or a flat list?~~ **Decided:** a flat list of boards with search for v1. Later, boards can be attached to a client: a `clients` table and a nullable `boards.client_id`, added by an additive migration, with a client filter on the board list.
 4. ~~Frontend framework?~~ **Decided:** Preact with signals (see the stack table in section 2).
 5. ~~Which MCP clients?~~ **Decided:** Claude Code only for now, with a static bearer token. Using Board from claude.ai or Claude Desktop as a remote connector would mean adding OAuth to `/mcp`; revisit when needed.
@@ -1120,6 +1025,12 @@ Later ideas: clients, with boards attached to them (open question 3); schema exp
 ---
 
 ## 16. Changes
+
+### v1.0
+
+- **Typeset, as it really is:** Board pushes Typeset's JSON document (schema 2) with drawings embedded, using a Clients caller key, the same as Design. No pull mode, no signed Typeset URLs, no `sources` input, no `typeset-doc` crate (Q1, Q2). Mapping in 8.4; `checklist`, `tree` and the tall-image fix added to Typeset (8.5).
+- **Planning PDFs:** `POST /pdf` (with `proof`), signed PDF links (`/p/{board}.pdf`), `GET /typeset` for combined documents, MCP `export_pdf` and `get_typeset_document`, and a PDF panel in the UI.
+- **Boards have a client** (`boards.client`, a slug in Clients): the PDF's brand, and in the board model for Design.
 
 ### v0.9
 

@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-typeset-doc = { path = "../typeset-doc" }
 board-model = { path = "../board-model" }
 axum = { version = "0.8.9", features = ["macros"] }
 tokio = { version = "1.54.1", features = ["full"] }

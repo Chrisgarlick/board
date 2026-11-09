@@ -5,6 +5,8 @@ export interface Board {
   title: string;
   description: string | null;
   stack: string | null;
+  /** The client's slug in Clients; PDFs use their brand. */
+  client: string | null;
   schema_version: number;
   archived: boolean;
   created_at: string;

@@ -9,6 +9,7 @@ fn board() -> Board {
         title: "Acme".into(),
         description: None,
         stack: Some("Laravel + MySQL".into()),
+        client: None,
         schema_version: 3,
         archived: false,
         created_at: "2026-11-06T00:00:00.000Z".into(),

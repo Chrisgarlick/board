@@ -53,7 +53,7 @@ Use get_board to see a board; draw flows with draw_flow (Mermaid) or add_items w
 add_table and update_table (references by table and column name are fine), and show tables \
 on a schema card. Pages go in a sitemap card; link a journey step to its page with the \
 shape's \"page\" (slug). Plan features with feature cards. get_board_model returns \
-the whole plan in the shape Design reads. Every change you make is recorded as yours and can be undone by \
+the whole plan in the shape Design reads; export_pdf makes the client-ready planning PDF. Every change you make is recorded as yours and can be undone by \
 the user, so act directly rather than asking for permission for ordinary edits.";
 
 type ToolResult = Result<String, String>;
@@ -98,6 +98,9 @@ pub struct CreateBoard {
     /// Free text, e.g. "Laravel + MySQL": the stack this job uses.
     #[serde(default)]
     pub stack: Option<String>,
+    /// The client's slug in Clients (their brand styles the PDF).
+    #[serde(default)]
+    pub client: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -109,6 +112,9 @@ pub struct UpdateBoard {
     pub description: Option<String>,
     #[serde(default)]
     pub stack: Option<String>,
+    /// The client's slug in Clients.
+    #[serde(default)]
+    pub client: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -318,6 +324,51 @@ pub struct RestoreRevision {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct PdfArgs {
+    pub board_id: String,
+    /// Frames and cards to include, in this order. Leave out for every frame and loose card, in reading order.
+    #[serde(default)]
+    pub item_ids: Vec<String>,
+    /// Cover title (default: the board's title).
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// Who it's for, on the cover.
+    #[serde(default)]
+    pub recipient: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub date: Option<String>,
+    /// A client's slug in Clients, for their brand (default: the board's client).
+    #[serde(default)]
+    pub client: Option<String>,
+    /// For a document you'll join with others: start with a part divider of this title.
+    #[serde(default)]
+    pub part: Option<String>,
+}
+
+impl PdfArgs {
+    fn options(self) -> (String, crate::typeset::Options) {
+        (
+            self.board_id,
+            crate::typeset::Options {
+                item_ids: self.item_ids,
+                title: self.title,
+                subtitle: self.subtitle,
+                recipient: self.recipient,
+                author: self.author,
+                date: self.date,
+                eyebrow: None,
+                client: self.client,
+                part: self.part,
+            },
+        )
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct AddTable {
     pub board_id: String,
     /// The table's database name: letters, digits and underscores.
@@ -440,6 +491,7 @@ impl BoardMcp {
                 title: p.title,
                 description: p.description,
                 stack: p.stack,
+                client: p.client,
             },
         )
         .await
@@ -448,7 +500,9 @@ impl BoardMcp {
         ok(json!(board))
     }
 
-    #[tool(description = "Rename a board, or change its description or stack.")]
+    #[tool(
+        description = "Rename a board, or change its description, stack or client (a slug in Clients, whose brand styles the PDF)."
+    )]
     async fn update_board(
         &self,
         Parameters(p): Parameters<UpdateBoard>,
@@ -462,6 +516,7 @@ impl BoardMcp {
             title: p.title,
             description: p.description.map(Some),
             stack: p.stack.map(Some),
+            client: p.client.map(Some),
             archived: None,
         };
         let board = boards::update(&mut tx, ctx(&self.state, who), &p.board_id, patch)
@@ -883,6 +938,40 @@ impl BoardMcp {
                 "give item_id or table_id",
             ))),
         }
+    }
+
+    #[tool(
+        description = "Make the board's planning PDF through Typeset, in the board's client's brand: a cover, contents, then each frame (its drawing, then the cards in it) and each loose card (features, schemas with their ER diagram and column tables, sitemaps, notes, checklists), in reading order. Checks it renders and returns a signed link to the PDF (valid 7 days, renders the board as it is when opened) and the page count. Only frames and cards go in: put drawings in a frame."
+    )]
+    async fn export_pdf(&self, Parameters(p): Parameters<PdfArgs>) -> ToolResult {
+        let (board_id, opts) = p.options();
+        let proof = crate::routes::pdf::proof(&self.state, &board_id, opts.clone())
+            .await
+            .map_err(fail)?;
+        let link =
+            crate::routes::pdf::pdf_link(&self.state, &board_id, &opts, None).map_err(fail)?;
+        ok(json!({
+            "url": link["url"],
+            "expires_at": link["expires_at"],
+            "pages": proof["pages"],
+            "warnings": proof["warnings"],
+        }))
+    }
+
+    #[tool(
+        description = "The board as a Typeset document (JSON, schema 2) with its drawings as signed image links, for joining with other documents (e.g. Design's screens, which are `page` blocks) before rendering one combined PDF with Typeset. Pass `part` to start it with a part divider. To just make the board's PDF, use export_pdf."
+    )]
+    async fn get_typeset_document(&self, Parameters(p): Parameters<PdfArgs>) -> ToolResult {
+        let (board_id, opts) = p.options();
+        let doc = crate::routes::pdf::build(
+            &self.state,
+            &board_id,
+            opts,
+            crate::routes::pdf::Images::Links,
+        )
+        .await
+        .map_err(fail)?;
+        ok(json!({ "document": doc.json, "warnings": doc.warnings }))
     }
 
     #[tool(

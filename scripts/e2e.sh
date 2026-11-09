@@ -19,7 +19,8 @@ cargo build -q
 
 TMP=$(mktemp -d)
 trap 'kill "${SERVER:-}" 2>/dev/null || true; rm -rf "$TMP"' EXIT
-printf 'database = "%s/board.db"\n' "$TMP" > "$TMP/board.toml"
+# Typeset is a fake that e2e/pdf.mjs runs on port 7171.
+printf 'database = "%s/board.db"\ntypeset_url = "http://127.0.0.1:7171"\ntypeset_key = "ck_e2e"\n' "$TMP" > "$TMP/board.toml"
 BIN=./target/debug/board
 CONFIG=(--config "$TMP/board.toml")
 

@@ -1,6 +1,6 @@
 // Board settings (spec 10.3): title, description and the job's stack.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 import { api } from "../api";
 import { board, report, status } from "../store";
@@ -15,7 +15,25 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     description: b?.description ?? "",
     stack: b?.stack ?? "",
   });
+  const [clients, setClients] = useState<{ slug: string; name: string }[] | null>(null);
+  useEffect(() => {
+    api
+      .typesetClients()
+      .then(setClients)
+      .catch(() => setClients(null));
+  }, []);
   if (!b) return null;
+
+  async function setClient(slug: string) {
+    const current = board.value;
+    if (!current) return;
+    try {
+      board.value = await api.updateBoard(current.id, { client: slug || null });
+      status.value = { kind: "info", text: "Saved." };
+    } catch (err) {
+      report(err, "set the client");
+    }
+  }
 
   async function save(field: Field) {
     const current = board.value;
@@ -67,6 +85,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <span class="settings-help">
             What this job is built with. Claude uses it to choose database types; it doesn't change the schema rules.
           </span>
+        </label>
+        <label>
+          Client
+          {clients ? (
+            <select value={b.client ?? ""} onChange={(e) => void setClient(e.currentTarget.value)}>
+              <option value="">None</option>
+              {clients.map((c) => (
+                <option key={c.slug} value={c.slug}>
+                  {c.name}
+                </option>
+              ))}
+              {b.client && !clients.some((c) => c.slug === b.client) && <option value={b.client}>{b.client}</option>}
+            </select>
+          ) : (
+            <input
+              defaultValue={b.client ?? ""}
+              placeholder="their slug in Clients"
+              onChange={(e) => void setClient(e.currentTarget.value.trim())}
+            />
+          )}
+          <span class="settings-help">Who the job is for. The planning PDF uses their brand from Clients.</span>
         </label>
       </form>
     </aside>

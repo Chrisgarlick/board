@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 pub mod images;
 pub mod passkeys;
+pub mod pdf;
 pub mod schema;
 
 use crate::app::AppState;
@@ -85,6 +86,10 @@ pub fn api(state: AppState) -> Router<AppState> {
         .route("/tables/{id}/restore/{rev}", post(schema::restore_table))
         .route("/items/{id}/er", get(schema::item_er))
         .route("/boards/{id}/model", get(get_model))
+        .route("/boards/{id}/pdf", post(pdf::render_pdf))
+        .route("/boards/{id}/pdf-link", post(pdf::create_link))
+        .route("/boards/{id}/typeset", get(pdf::document))
+        .route("/typeset/clients", get(pdf::clients))
         .route("/passkeys", get(passkeys::list).post(passkeys::register))
         .route("/passkeys/options", post(passkeys::creation_options))
         .route("/passkeys/{id}", axum::routing::delete(passkeys::remove))
@@ -100,6 +105,7 @@ pub fn public() -> Router<AppState> {
         .route("/login/{code}", get(login))
         .route("/i/{file}", get(images::public_image))
         .route("/api/model.schema.json", get(model_schema))
+        .route("/p/{file}", get(pdf::public_pdf))
         .route("/auth/passkey/options", post(passkeys::request_options))
         .route("/auth/passkey/login", post(passkeys::login))
 }

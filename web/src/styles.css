@@ -2000,3 +2000,91 @@ body.is-dragging {
   border: none;
   border-top: 1px solid color-mix(in srgb, var(--card-edge) 60%, transparent);
 }
+
+/* ---------- Planning PDF (phase 7) ---------- */
+
+.panel-wide {
+  width: min(30rem, calc(100vw - 1.5rem));
+}
+
+.settings select {
+  font: inherit;
+  font-weight: 400;
+  color: inherit;
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.5rem;
+}
+
+.pdf-heading {
+  margin: 1.2rem 0 0.4rem;
+  font-size: var(--step-0);
+}
+
+.pdf-units {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid color-mix(in srgb, var(--card-edge) 60%, transparent);
+}
+
+.pdf-units label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--card-edge) 60%, transparent);
+  cursor: pointer;
+}
+
+.pdf-units input {
+  accent-color: var(--ink);
+}
+
+.pdf-unit-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-unit-kind {
+  color: var(--ink-soft);
+  font-size: var(--step--1);
+}
+
+.pdf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0;
+}
+
+.pdf-actions .primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--card);
+}
+
+.pdf-warnings {
+  margin: 0 0 0.8rem;
+  padding: 0.5rem 0.8rem 0.5rem 1.6rem;
+  background: color-mix(in srgb, var(--mark) 18%, var(--card));
+  border-radius: var(--radius-control);
+  font-size: var(--step--1);
+}
+
+.pdf-proof {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.pdf-proof img {
+  width: 100%;
+  border: 1px solid var(--card-edge);
+  border-radius: 2px;
+  background: #fff;
+}

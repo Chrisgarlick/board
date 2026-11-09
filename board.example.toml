@@ -16,4 +16,6 @@ public_origin = "http://localhost:7070"
 # server_secret = "..."
 
 # Typeset base URL, for push-mode PDF exports (phase 7).
-# typeset_url = "https://typeset.example.com"
+# typeset_url = "https://typeset.chrisgarlick.com"
+# Board's caller key for Typeset, from Clients (clients-admin keys create board --kind caller).
+# typeset_key = "ck_…"
