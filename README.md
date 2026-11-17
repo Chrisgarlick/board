@@ -17,7 +17,7 @@ web/                 frontend source; web/dist is served by the app
 
 ## Development
 
-Needs Rust (stable) and Node 22.
+Needs Rust (stable) and Node 22. `bin/setup` gets a fresh clone ready (packages, web/dist, crates, the pre-push hook) and is safe to run again.
 
 ```sh
 cd web && npm install && npm run build && cd ..
