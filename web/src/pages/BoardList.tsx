@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { AccountPanel, usePasskeys } from "./AccountPanel";
 import { navigate } from "../router";
-import { report } from "../store";
+import { canWrite, readOnly, report } from "../store";
 import { ago } from "../time";
 import type { BoardSummary } from "../types";
 
@@ -34,7 +34,7 @@ export function BoardList() {
   async function create(e: Event) {
     e.preventDefault();
     const title = newTitle.trim();
-    if (!title) return;
+    if (!title || !canWrite()) return;
     try {
       const b = await api.createBoard(title);
       navigate(`/boards/${b.id}`);
@@ -44,6 +44,7 @@ export function BoardList() {
   }
 
   async function update(id: string, patch: { title?: string; archived?: boolean }) {
+    if (!canWrite()) return;
     try {
       await api.updateBoard(id, patch);
       refresh();
@@ -56,24 +57,30 @@ export function BoardList() {
     <main class="boards">
       <header class="boards-header">
         <h1>Boards</h1>
-        <form class="new-board" onSubmit={create}>
-          <input
-            value={newTitle}
-            placeholder="New board, e.g. Acme rebuild"
-            aria-label="New board title"
-            onInput={(e) => setNewTitle(e.currentTarget.value)}
-          />
-          <button type="submit" disabled={!newTitle.trim()}>
-            Create board
-          </button>
-        </form>
+        {readOnly.value ? (
+          <span class="review-badge" title="Editing tools are off. Turn them on under Account.">
+            Review mode
+          </span>
+        ) : (
+          <form class="new-board" onSubmit={create}>
+            <input
+              value={newTitle}
+              placeholder="New board, e.g. Acme rebuild"
+              aria-label="New board title"
+              onInput={(e) => setNewTitle(e.currentTarget.value)}
+            />
+            <button type="submit" disabled={!newTitle.trim()}>
+              Create board
+            </button>
+          </form>
+        )}
         <button
           type="button"
           class={`text-button${account ? " is-active" : ""}`}
           aria-pressed={account}
           onClick={() => setAccount(!account)}
         >
-          Passkeys
+          Account
         </button>
       </header>
 
@@ -122,7 +129,9 @@ export function BoardList() {
             ? `No boards match “${q}”.`
             : archived
               ? "No archived boards."
-              : "No boards yet. Name your first one above."}
+              : readOnly.value
+                ? "No boards yet. Claude creates them through MCP."
+                : "No boards yet. Name your first one above."}
         </p>
       ) : (
         <ul class="board-rows">
@@ -160,14 +169,16 @@ export function BoardList() {
                 {b.item_count === 1 ? "1 card" : `${b.item_count} cards`}
               </span>
               <span class="board-row-meta">Edited {ago(b.updated_at)}</span>
-              <span class="board-row-actions">
-                <button type="button" class="text-button" onClick={() => setRenaming(b.id)}>
-                  Rename
-                </button>
-                <button type="button" class="text-button" onClick={() => void update(b.id, { archived: !b.archived })}>
-                  {b.archived ? "Unarchive" : "Archive"}
-                </button>
-              </span>
+              {!readOnly.value && (
+                <span class="board-row-actions">
+                  <button type="button" class="text-button" onClick={() => setRenaming(b.id)}>
+                    Rename
+                  </button>
+                  <button type="button" class="text-button" onClick={() => void update(b.id, { archived: !b.archived })}>
+                    {b.archived ? "Unarchive" : "Archive"}
+                  </button>
+                </span>
+              )}
             </li>
           ))}
         </ul>

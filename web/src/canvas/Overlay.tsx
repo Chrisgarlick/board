@@ -2,7 +2,7 @@
 // rubber band while creating), alignment guides, and quick-flow handles.
 
 import type { Side } from "../types";
-import { editingId, selectedItems, tool } from "../store";
+import { editingId, readOnly, selectedItems, tool } from "../store";
 import { guides, liveRect, marquee, moving, startConnect } from "./interact";
 import { addNext, addNextAt } from "./quickflow";
 import { view } from "./viewport";
@@ -42,6 +42,7 @@ const SIDES: Side[] = ["top", "right", "bottom", "left"];
 function QuickFlowHandles() {
   const list = selectedItems.value;
   const only = list.length === 1 ? list[0] : undefined;
+  if (readOnly.value) return null;
   if (!only || only.kind !== "shape" || only.locked || editingId.value === only.id || moving.value.size) return null;
   const v = view.value;
   const r = liveRect(only);

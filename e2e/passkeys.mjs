@@ -52,7 +52,7 @@ await page.waitForURL(BASE + "/");
 await page.getByText("Add a passkey so you can sign in").waitFor();
 check("the board list nudges you to add a passkey", true);
 await page.locator(".notice").getByRole("button", { name: "Add a passkey" }).click();
-const panel = page.getByRole("complementary", { name: "Passkeys" });
+const panel = page.getByRole("complementary", { name: "Account" });
 await panel.getByLabel("Name").fill("Test phone");
 await panel.getByRole("button", { name: "Add a passkey" }).click();
 await panel.locator(".trash-title", { hasText: "Test phone" }).waitFor();
@@ -72,10 +72,10 @@ const me = await page.evaluate(async () => (await fetch("/api/me")).json());
 check("…as you", me.actor === "user", JSON.stringify(me));
 
 // Removing it means it can't sign in any more.
-await page.getByRole("button", { name: "Passkeys" }).click();
+await page.getByRole("button", { name: "Account" }).click();
 await page.getByRole("button", { name: "Remove" }).click();
 await page.getByText("Add a passkey so you can sign in").waitFor({ state: "hidden" }).catch(() => {});
-await page.getByRole("complementary", { name: "Passkeys" }).getByRole("button", { name: "Log out of this browser" }).click();
+await page.getByRole("complementary", { name: "Account" }).getByRole("button", { name: "Log out of this browser" }).click();
 await page.getByRole("button", { name: "Sign in with a passkey" }).click();
 await page.getByRole("alert").waitFor();
 check("a removed passkey can't sign in", (await page.getByRole("alert").textContent()).includes("isn't registered"), await page.getByRole("alert").textContent());

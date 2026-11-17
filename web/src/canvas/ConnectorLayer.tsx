@@ -5,7 +5,17 @@
 
 import { useRef, useState } from "preact/hooks";
 
-import { connectorIds, connectors, frameIds, item, itemIds, selectedConnector, select, updateConnector } from "../store";
+import {
+  connectorIds,
+  connectors,
+  frameIds,
+  item,
+  itemIds,
+  readOnly,
+  selectedConnector,
+  select,
+  updateConnector,
+} from "../store";
 import type { Connector, ConnectorStyle } from "../types";
 import { connecting, hoverTarget, liveRect } from "./interact";
 import { anchorPoint, pathData, route, type Point, type Route } from "./routing";
@@ -103,10 +113,12 @@ function ConnectorLabel({ id }: { id: string }) {
   const r = routeFor(c);
   if (!r) return null;
   const selected = selectedConnector.value === id;
-  if (!c.label && !editing && !selected) return null;
+  const ro = readOnly.value;
+  // Review mode: labels are shown, never edited (and no "Add label" prompt).
+  if (!c.label && (ro || (!editing && !selected))) return null;
 
   const pos = { left: `${r.label.x}px`, top: `${r.label.y}px` };
-  if (editing) {
+  if (editing && !ro) {
     return (
       <input
         class="connector-label-input"
@@ -140,11 +152,12 @@ function ConnectorLabel({ id }: { id: string }) {
         selectedConnector.value = id;
       }}
       onDblClick={() => {
+        if (ro) return;
         before.current = c.label;
         setEditing(true);
       }}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !ro) {
           before.current = c.label;
           setEditing(true);
         }

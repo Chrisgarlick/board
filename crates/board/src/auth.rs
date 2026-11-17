@@ -297,6 +297,33 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 
 // ---------- Middleware ----------
 
+const REVIEW_MODE_MESSAGE: &str = "Board is in review mode: turn editing on in your account settings to change boards in the browser";
+
+/// The writes a browser session may still make in review mode: signing in
+/// and out, passkeys, exports (PDFs, rendered images and their links),
+/// restoring a revision or something from the trash (restoring is part of
+/// reviewing), and the settings switch itself.
+///
+/// `path` is relative to `/api` (axum strips the prefix for nested routers);
+/// an `/api` prefix is tolerated too.
+fn allowed_in_review_mode(method: &Method, path: &str) -> bool {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    matches!(
+        (method, segments.as_slice()),
+        (&Method::POST, ["logout"])
+            | (&Method::PUT, ["settings"])
+            | (_, ["passkeys", ..])
+            | (&Method::POST, ["boards", _, "pdf" | "pdf-link" | "render"])
+            | (&Method::POST, ["items", _, "image-url"])
+            | (&Method::POST, ["items" | "tables", _, "restore", _])
+            | (
+                &Method::POST,
+                ["items" | "connectors" | "tables", _, "undelete"]
+            )
+    )
+}
+
 /// Authenticate every `/api` request and attach a [`Caller`].
 ///
 /// - A bearer token wins over a cookie.
@@ -328,6 +355,11 @@ pub async fn require_caller(
                     "Origin doesn't match this Board's public_origin",
                 ));
             }
+            if !allowed_in_review_mode(request.method(), request.uri().path())
+                && crate::settings::review_mode(&state.pool).await?
+            {
+                return Err(AppError::Forbidden(REVIEW_MODE_MESSAGE));
+            }
         }
         caller
     } else {
@@ -357,6 +389,34 @@ mod tests {
 
         headers.insert(header::COOKIE, "board_session=".parse().unwrap());
         assert_eq!(session_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn review_mode_allows_only_reviewing_writes() {
+        let ok = |m: Method, p: &str| allowed_in_review_mode(&m, p);
+        assert!(ok(Method::POST, "/logout"));
+        assert!(ok(Method::PUT, "/settings"));
+        assert!(ok(Method::POST, "/passkeys/options"));
+        assert!(ok(Method::DELETE, "/passkeys/abc"));
+        assert!(ok(Method::POST, "/boards/b1/pdf"));
+        assert!(ok(Method::POST, "/api/boards/b1/pdf-link"));
+        assert!(ok(Method::POST, "/boards/b1/render"));
+        assert!(ok(Method::POST, "/items/i1/image-url"));
+        assert!(ok(Method::POST, "/items/i1/restore/3"));
+        assert!(ok(Method::POST, "/tables/t1/restore/3"));
+        assert!(ok(Method::POST, "/items/i1/undelete"));
+        assert!(ok(Method::POST, "/connectors/c1/undelete"));
+        assert!(ok(Method::POST, "/tables/t1/undelete"));
+
+        assert!(!ok(Method::POST, "/boards"));
+        assert!(!ok(Method::PATCH, "/boards/b1"));
+        assert!(!ok(Method::POST, "/boards/b1/batch"));
+        assert!(!ok(Method::POST, "/boards/b1/items"));
+        assert!(!ok(Method::PATCH, "/items/i1"));
+        assert!(!ok(Method::DELETE, "/items/i1"));
+        assert!(!ok(Method::POST, "/boards/b1/tables"));
+        assert!(!ok(Method::POST, "/items/move"));
+        assert!(!ok(Method::PUT, "/boards/b1/pdf"));
     }
 
     #[test]

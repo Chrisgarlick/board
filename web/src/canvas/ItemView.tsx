@@ -10,6 +10,7 @@ import {
   editingId,
   fresh,
   pages,
+  readOnly,
   rememberEdit,
   selection,
   type ContentPatch,
@@ -60,6 +61,7 @@ export function Box({
   const single = selected && selection.value.size === 1;
   const color = i.style?.color ? ` c-${i.style.color}` : "";
   const isFresh = fresh.value.has(i.id);
+  const ro = readOnly.value;
   return (
     <div
       class={`item ${cls}${color}${selected ? " is-selected" : ""}${lifted ? " is-lifted" : ""}${i.locked ? " is-locked" : ""}${isFresh ? " is-fresh" : ""}`}
@@ -68,10 +70,10 @@ export function Box({
       aria-label={label}
       style={{ left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }}
       onPointerDown={draggable ? (e) => pressItem(e, i.id) : undefined}
-      onDblClick={draggable ? () => (editingId.value = i.id) : undefined}
+      onDblClick={draggable && !ro ? () => (editingId.value = i.id) : undefined}
     >
       {children}
-      {single && !i.locked && editingId.value !== i.id && i.kind !== "card" && (
+      {single && !ro && !i.locked && editingId.value !== i.id && i.kind !== "card" && (
         <div class="resize-handle" aria-hidden="true" onPointerDown={(e) => pressResize(e, i.id)} />
       )}
       {i.locked && <span class="lock-badge" title="Locked (Cmd+L to unlock)" aria-label="Locked" />}
@@ -127,7 +129,7 @@ function ShapeView({ item: i }: { item: Item }) {
   const c = i.content as ShapeContent;
   const r = liveRect(i);
   const align = i.style?.align ?? "center";
-  const editing = editingId.value === i.id;
+  const editing = editingId.value === i.id && !readOnly.value;
   return (
     <Box item={i} class={`shape shape-${c.shape}`} label={`${SHAPE_LABELS[c.shape]}: ${c.text || "empty"}`}>
       <svg class="shape-outline" width={r.w} height={r.h} aria-hidden="true">
@@ -163,13 +165,13 @@ function PageSlug({ pageId }: { pageId: string | undefined }) {
 
 function StickyView({ item: i }: { item: Item }) {
   const c = i.content as StickyContent;
-  const editing = editingId.value === i.id;
+  const editing = editingId.value === i.id && !readOnly.value;
   return (
     <Box item={i} class="sticky" label={`Sticky note: ${c.text || "empty"}`}>
       {editing ? (
         <TextEditor item={i} value={c.text} patch={(text) => ({ content: { text } })} label="Sticky note text" />
       ) : (
-        <div class="sticky-text">{c.text || <span class="placeholder">Double-click to write</span>}</div>
+        <div class="sticky-text">{c.text || (!readOnly.value && <span class="placeholder">Double-click to write</span>)}</div>
       )}
     </Box>
   );
@@ -178,7 +180,7 @@ function StickyView({ item: i }: { item: Item }) {
 function TextView({ item: i }: { item: Item }) {
   const c = i.content as TextContent;
   const align = i.style?.align ?? "left";
-  const editing = editingId.value === i.id;
+  const editing = editingId.value === i.id && !readOnly.value;
   return (
     <Box item={i} class={`free-text size-${c.size}`} label={`Text: ${c.text || "empty"}`}>
       {editing ? (
@@ -197,17 +199,17 @@ function TextView({ item: i }: { item: Item }) {
 }
 
 function FrameView({ item: i }: { item: Item }) {
-  const editing = editingId.value === i.id;
+  const editing = editingId.value === i.id && !readOnly.value;
   const title = i.title ?? "";
   return (
     <Box item={i} class="frame" label={`Frame: ${title}`} draggable={false}>
       <div
         class="frame-tab"
         onPointerDown={(e) => pressItem(e, i.id)}
-        onDblClick={() => (editingId.value = i.id)}
-        title="Drag to move the frame and everything in it"
+        onDblClick={() => !readOnly.value && (editingId.value = i.id)}
+        title={readOnly.value ? undefined : "Drag to move the frame and everything in it"}
       >
-        {editing ? (
+        {editing && !readOnly.value ? (
           <FrameTitleInput item={i} />
         ) : (
           <span class="frame-title">{title || <span class="placeholder">Untitled frame</span>}</span>

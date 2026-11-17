@@ -10,6 +10,7 @@ import {
   createTable,
   deleteTable,
   editTable,
+  readOnly,
   rememberTable,
   schemaVersion,
   setCardTables,
@@ -89,6 +90,18 @@ export function SchemaBody({ item }: { item: Item }) {
     );
     if (id) setFocusTable(id);
   }
+
+  // Review mode: just the diagram (it shows every column), no editors.
+  if (readOnly.value)
+    return (
+      <div class="schema" onPointerDown={(e) => e.stopPropagation()}>
+        {shown.length === 0 ? (
+          <p class="schema-empty">No tables on this card yet.</p>
+        ) : (
+          <ERPreview item={item} />
+        )}
+      </div>
+    );
 
   return (
     <div class="schema" onPointerDown={(e) => e.stopPropagation()}>

@@ -149,7 +149,8 @@ export async function downloadImage(
 }
 
 export const api = {
-  me: () => request<{ actor: string; scope: string }>("GET", "/me"),
+  me: () => request<{ actor: string; scope: string; review_mode: boolean }>("GET", "/me"),
+  setReviewMode: (on: boolean) => request<{ review_mode: boolean }>("PUT", "/settings", { review_mode: on }),
   passkeys: () =>
     request<{ passkeys: { id: string; name: string; created_at: string; last_used_at: string | null }[] }>(
       "GET",

@@ -5,7 +5,17 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { renderMarkdown } from "../markdown";
-import { cardsShowing, editContent, item, pages, rememberEdit, tableList, tables, type ContentPatch } from "../store";
+import {
+  cardsShowing,
+  editContent,
+  item,
+  pages,
+  readOnly,
+  rememberEdit,
+  tableList,
+  tables,
+  type ContentPatch,
+} from "../store";
 import type { FeatureContent, FeatureStatus } from "../types";
 import { reveal } from "./SchemaPanel";
 
@@ -23,6 +33,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
   const focusNext = useRef<string | null>(null);
   // The content when the current text edit began, for undo.
   const before = useRef<ContentPatch | null>(null);
+  const ro = readOnly.value;
 
   useLayoutEffect(() => {
     const sel = focusNext.current;
@@ -33,6 +44,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
 
   /** A typed edit: saved after a pause, one undo step when the field loses focus. */
   function type(patch: Partial<FeatureContent>) {
+    if (ro) return;
     before.current ??= { content: item(id)?.content };
     editContent(id, { content: { ...content, ...patch } });
   }
@@ -43,6 +55,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
   }
   /** A one-shot edit: saved now, its own undo step. */
   function commit(patch: Partial<FeatureContent>) {
+    if (ro) return;
     const start = { content: item(id)?.content };
     const after = { content: { ...content, ...patch } };
     editContent(id, after, true);
@@ -64,6 +77,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
             role="radio"
             aria-checked={content.status === s.value}
             class={`status-${s.value}${content.status === s.value ? " is-active" : ""}`}
+            disabled={ro}
             onClick={() => commit({ status: s.value })}
           >
             {s.label}
@@ -72,7 +86,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
       </div>
 
       <section class="feature-section">
-        {editingSummary ? (
+        {editingSummary && !ro ? (
           <textarea
             class="feature-summary-editor"
             value={content.summary}
@@ -95,9 +109,9 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
           <div
             class="feature-summary"
             tabIndex={0}
-            onDblClick={() => setEditingSummary(true)}
+            onDblClick={() => !ro && setEditingSummary(true)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !ro) {
                 e.preventDefault();
                 setEditingSummary(true);
               }
@@ -106,7 +120,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
             {content.summary.trim() ? (
               <div class="markdown" dangerouslySetInnerHTML={{ __html: html }} />
             ) : (
-              <p class="placeholder">Double-click to describe the feature.</p>
+              <p class="placeholder">{ro ? "No summary yet." : "Double-click to describe the feature."}</p>
             )}
           </div>
         )}
@@ -123,6 +137,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
                 value={story}
                 placeholder="As a … I want … so that …"
                 aria-label={`Story ${k + 1}`}
+                readOnly={ro}
                 onInput={(e) => type({ stories: content.stories.map((s, j) => (j === k ? e.currentTarget.value : s)) })}
                 onBlur={end}
                 onKeyDown={(e) => {
@@ -143,16 +158,18 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
             </li>
           ))}
         </ul>
-        <button
-          type="button"
-          class="text-button feature-add"
-          onClick={() => {
-            commit({ stories: [...content.stories, ""] });
-            focusNext.current = `[data-story="${content.stories.length}"]`;
-          }}
-        >
-          Add story
-        </button>
+        {!ro && (
+          <button
+            type="button"
+            class="text-button feature-add"
+            onClick={() => {
+              commit({ stories: [...content.stories, ""] });
+              focusNext.current = `[data-story="${content.stories.length}"]`;
+            }}
+          >
+            Add story
+          </button>
+        )}
       </section>
 
       <section class="feature-section">
@@ -170,6 +187,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
               <input
                 type="checkbox"
                 checked={a.done}
+                disabled={ro}
                 aria-label={a.done ? "Mark as not met" : "Mark as met"}
                 onChange={(e) =>
                   commit({
@@ -183,6 +201,7 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
                 value={a.text}
                 placeholder="A check that proves it works"
                 aria-label={`Acceptance check ${k + 1}`}
+                readOnly={ro}
                 onInput={(e) =>
                   type({ acceptance: content.acceptance.map((x, j) => (j === k ? { ...x, text: e.currentTarget.value } : x)) })
                 }
@@ -205,16 +224,18 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
             </li>
           ))}
         </ul>
-        <button
-          type="button"
-          class="text-button feature-add"
-          onClick={() => {
-            commit({ acceptance: [...content.acceptance, { text: "", done: false }] });
-            focusNext.current = `[data-acceptance="${content.acceptance.length}"]`;
-          }}
-        >
-          Add check
-        </button>
+        {!ro && (
+          <button
+            type="button"
+            class="text-button feature-add"
+            onClick={() => {
+              commit({ acceptance: [...content.acceptance, { text: "", done: false }] });
+              focusNext.current = `[data-acceptance="${content.acceptance.length}"]`;
+            }}
+          >
+            Add check
+          </button>
+        )}
       </section>
 
       <section class="feature-section feature-links">
@@ -233,18 +254,21 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
                 >
                   {t.name}
                 </button>
-                <button
-                  type="button"
-                  class="chip-remove"
-                  aria-label={`Remove ${t.name}`}
-                  onClick={() => commit({ table_ids: content.table_ids.filter((x) => x !== t.id) })}
-                >
-                  ×
-                </button>
+                {!ro && (
+                  <button
+                    type="button"
+                    class="chip-remove"
+                    aria-label={`Remove ${t.name}`}
+                    onClick={() => commit({ table_ids: content.table_ids.filter((x) => x !== t.id) })}
+                  >
+                    ×
+                  </button>
+                )}
               </span>
             );
           })}
           <Picker
+            hidden={ro}
             label="Add table"
             options={tableList.value
               .filter((t) => !content.table_ids.includes(t.id))
@@ -266,18 +290,21 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
                 >
                   {p.node.slug ?? p.node.title}
                 </button>
-                <button
-                  type="button"
-                  class="chip-remove"
-                  aria-label={`Remove ${p.node.title}`}
-                  onClick={() => commit({ page_ids: content.page_ids.filter((x) => x !== p.node.id) })}
-                >
-                  ×
-                </button>
+                {!ro && (
+                  <button
+                    type="button"
+                    class="chip-remove"
+                    aria-label={`Remove ${p.node.title}`}
+                    onClick={() => commit({ page_ids: content.page_ids.filter((x) => x !== p.node.id) })}
+                  >
+                    ×
+                  </button>
+                )}
               </span>
             );
           })}
           <Picker
+            hidden={ro}
             label="Add page"
             options={allPages
               .filter((p) => !content.page_ids.includes(p.node.id))
@@ -291,15 +318,17 @@ export function FeatureBody({ id, content }: { id: string; content: FeatureConte
 }
 
 function Picker({
+  hidden,
   label,
   options,
   onPick,
 }: {
+  hidden: boolean;
   label: string;
   options: { value: string; label: string }[];
   onPick: (value: string) => void;
 }) {
-  if (options.length === 0) return null;
+  if (hidden || options.length === 0) return null;
   return (
     <select
       class="chip-picker"

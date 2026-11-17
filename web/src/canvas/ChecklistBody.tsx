@@ -3,7 +3,7 @@
 
 import { useLayoutEffect, useRef } from "preact/hooks";
 
-import { editContent } from "../store";
+import { editContent, readOnly } from "../store";
 import type { ChecklistContent, ChecklistItem } from "../types";
 
 interface Group {
@@ -45,7 +45,10 @@ export function ChecklistBody({ id, content }: { id: string; content: ChecklistC
     focusNext.current = index;
   }
 
+  const ro = readOnly.value;
+
   function save(next: ChecklistItem[], immediate = false) {
+    if (ro) return;
     editContent(id, { content: { items: next } }, immediate);
   }
 
@@ -93,6 +96,7 @@ export function ChecklistBody({ id, content }: { id: string; content: ChecklistC
               class="checklist-group-name"
               value={g.name}
               aria-label="Group name"
+              readOnly={ro}
               onChange={(e) => renameGroup(g.name, e.currentTarget.value)}
             />
           )}
@@ -105,6 +109,7 @@ export function ChecklistBody({ id, content }: { id: string; content: ChecklistC
                   <input
                     type="checkbox"
                     checked={item.done}
+                    disabled={ro}
                     aria-label={item.done ? "Mark as not done" : "Mark as done"}
                     onChange={(e) => update(i, { done: e.currentTarget.checked }, true)}
                   />
@@ -114,6 +119,7 @@ export function ChecklistBody({ id, content }: { id: string; content: ChecklistC
                     value={item.text}
                     placeholder="Item"
                     aria-label="Item text"
+                    readOnly={ro}
                     onInput={(e) => update(i, { text: e.currentTarget.value })}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
@@ -132,12 +138,16 @@ export function ChecklistBody({ id, content }: { id: string; content: ChecklistC
         </section>
       ))}
       <footer class="checklist-footer">
-        <button type="button" class="text-button" onClick={() => insertAfter(items.length - 1, undefined)}>
-          Add item
-        </button>
-        <button type="button" class="text-button" onClick={addGroup}>
-          Add group
-        </button>
+        {!ro && (
+          <>
+            <button type="button" class="text-button" onClick={() => insertAfter(items.length - 1, undefined)}>
+              Add item
+            </button>
+            <button type="button" class="text-button" onClick={addGroup}>
+              Add group
+            </button>
+          </>
+        )}
         <span class="checklist-count">
           {done} of {items.length} done
         </span>

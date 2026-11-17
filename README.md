@@ -58,6 +58,15 @@ cargo run -- token create --name laptop --scope admin --actor api   # for script
 
 `board --help` lists every command.
 
+### Review mode
+
+By default the browser is a review layer: view, history, export (PDFs and
+images) and restore from history or the trash, with no editing tools. Claude
+edits through MCP, and tokens work as usual. To edit in the browser, turn on
+**Editing tools** under Account on the board list (or run
+`board review-mode off` on the server). While review mode is on, browser
+sessions get 403 on anything else that writes.
+
 ## Connecting Claude Code
 
 Board is an MCP server at `/mcp`. Create a token that acts as Claude, then add it to Claude Code:

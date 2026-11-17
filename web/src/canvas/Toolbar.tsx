@@ -2,7 +2,7 @@
 
 import type { ComponentChildren } from "preact";
 
-import { canRedo, canUndo, redo, tool, undo, type Tool } from "../store";
+import { canRedo, canUndo, readOnly, redo, tool, undo, type Tool } from "../store";
 import { ShapeIcon } from "./shapes";
 
 interface ToolDef {
@@ -43,6 +43,8 @@ const TOOLS: ToolDef[] = [
 export const TOOL_KEYS: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key.toLowerCase(), t.tool]));
 
 export function Toolbar() {
+  // Review mode: no drawing tools, and nothing to undo.
+  if (readOnly.value) return null;
   const active = tool.value;
   return (
     <nav class="toolbar" aria-label="Tools">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { api } from "../api";
-import { board, report, status } from "../store";
+import { board, readOnly, report, status } from "../store";
 import type { Board } from "../types";
 
 type Field = "title" | "description" | "stack";
@@ -23,10 +23,11 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       .catch(() => setClients(null));
   }, []);
   if (!b) return null;
+  const ro = readOnly.value;
 
   async function setClient(slug: string) {
     const current = board.value;
-    if (!current) return;
+    if (!current || ro) return;
     try {
       board.value = await api.updateBoard(current.id, { client: slug || null });
       status.value = { kind: "info", text: "Saved." };
@@ -37,7 +38,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   async function save(field: Field) {
     const current = board.value;
-    if (!current) return;
+    if (!current || ro) return;
     const value = draft[field].trim();
     const was = (current[field] ?? "") as string;
     if (value === was) return;
@@ -58,6 +59,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   const input = (field: Field) => ({
     value: draft[field],
+    readOnly: ro,
     onInput: (e: Event) => setDraft({ ...draft, [field]: (e.currentTarget as HTMLInputElement).value }),
     onBlur: () => void save(field),
   });
@@ -70,6 +72,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           ×
         </button>
       </header>
+      {ro && <p class="panel-note">Review mode: these are read-only. Claude changes them through MCP.</p>}
       <form class="settings" onSubmit={(e) => e.preventDefault()}>
         <label>
           Title
@@ -89,7 +92,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         <label>
           Client
           {clients ? (
-            <select value={b.client ?? ""} onChange={(e) => void setClient(e.currentTarget.value)}>
+            <select value={b.client ?? ""} disabled={ro} onChange={(e) => void setClient(e.currentTarget.value)}>
               <option value="">None</option>
               {clients.map((c) => (
                 <option key={c.slug} value={c.slug}>
@@ -101,6 +104,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           ) : (
             <input
               defaultValue={b.client ?? ""}
+              readOnly={ro}
               placeholder="their slug in Clients"
               onChange={(e) => void setClient(e.currentTarget.value.trim())}
             />

@@ -2088,3 +2088,30 @@ body.is-dragging {
   border-radius: 2px;
   background: #fff;
 }
+
+/* Review mode: the browser is a review layer (no editing tools). */
+.review-badge {
+  flex: none;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--card-edge);
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.setting-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-weight: 600;
+}
+
+.setting-switch input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--ink);
+}

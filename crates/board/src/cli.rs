@@ -45,6 +45,13 @@ enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Turn review mode on or off. On (the default), the browser is a review
+    /// layer: no editing tools, and browser sessions can't change boards.
+    /// Claude and API tokens are unaffected either way.
+    ReviewMode {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Write a board's model (`board-model.json`) into a directory: from
     /// this machine's database, or from a remote Board with `--from`.
     Pull {
@@ -81,6 +88,12 @@ enum TokenCommand {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum Scope {
     Admin,
     Read,
@@ -97,6 +110,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Serve => serve(&cli.config).await,
         Command::Login => login(&cli.config).await,
         Command::Token { command } => token(&cli.config, command).await,
+        Command::ReviewMode { state } => review_mode(&cli.config, state).await,
         Command::Pull {
             board_id,
             into,
@@ -110,6 +124,21 @@ async fn open(config_path: &Path) -> Result<(Config, sqlx::SqlitePool)> {
     let config = Config::load_or_init(config_path)?;
     let pool = db::connect(&config.database).await?;
     Ok((config, pool))
+}
+
+async fn review_mode(config_path: &Path, state: OnOff) -> Result<()> {
+    let (_, pool) = open(config_path).await?;
+    let on = matches!(state, OnOff::On);
+    crate::settings::set_review_mode(&pool, on).await?;
+    eprintln!(
+        "Review mode is {}.",
+        if on {
+            "on: the browser is a review layer"
+        } else {
+            "off: the browser can edit boards"
+        }
+    );
+    Ok(())
 }
 
 async fn serve(config_path: &Path) -> Result<()> {

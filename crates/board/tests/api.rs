@@ -122,10 +122,209 @@ async fn login_link_sets_a_session_that_needs_a_matching_origin_to_write() {
             .status,
         StatusCode::FORBIDDEN
     );
+    // Review mode is on by default: the browser can look but not edit.
+    assert_eq!(
+        app.send(with_cookie("POST", Some(ORIGIN))).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let session = cookie.split_once('=').unwrap().1;
+    let res = app
+        .call_session(
+            session,
+            "PUT",
+            "/api/settings",
+            Some(json!({ "review_mode": false })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
     assert_eq!(
         app.send(with_cookie("POST", Some(ORIGIN))).await.status,
         StatusCode::CREATED
     );
+}
+
+// ---------- Review mode ----------
+
+#[tokio::test]
+async fn review_mode_is_on_by_default_and_blocks_browser_edits() {
+    let app = TestApp::new().await;
+    let session = app.session().await;
+    let me = app.call_session(&session, "GET", "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.body["review_mode"], true);
+    // Tokens see the setting too.
+    assert_eq!(
+        app.call("GET", "/api/me", None).await.body["review_mode"],
+        true
+    );
+
+    let board = app.board().await;
+    let batch = |text: &str| json!({ "ops": [{ "op": "create_item", "kind": "sticky", "content": { "text": text } }] });
+    let uri = format!("/api/boards/{board}/batch");
+    let res = app
+        .call_session(&session, "POST", &uri, Some(batch("From the browser")))
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert!(
+        res.body["message"]
+            .as_str()
+            .unwrap()
+            .contains("review mode"),
+        "{:?}",
+        res.body
+    );
+    // Reading still works.
+    let res = app
+        .call_session(&session, "GET", &format!("/api/boards/{board}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    // Turn editing on, from the browser.
+    let res = app
+        .call_session(
+            &session,
+            "PUT",
+            "/api/settings",
+            Some(json!({ "review_mode": false })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["review_mode"], false);
+    assert_eq!(
+        app.call_session(&session, "GET", "/api/me", None)
+            .await
+            .body["review_mode"],
+        false
+    );
+    let res = app
+        .call_session(&session, "POST", &uri, Some(batch("From the browser")))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+}
+
+#[tokio::test]
+async fn tokens_write_in_review_mode_but_cant_change_it() {
+    let app = TestApp::new().await;
+    let board = app.board().await;
+    let claude = app.token(Scope::Admin, Actor::Claude).await;
+    let res = app
+        .call_as(
+            &claude,
+            "POST",
+            &format!("/api/boards/{board}/batch"),
+            Some(json!({ "ops": [{ "op": "create_item", "kind": "sticky", "content": { "text": "Hi" } }] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+
+    for token in [claude.as_str(), app.admin.as_str()] {
+        let res = app
+            .call_as(
+                token,
+                "PUT",
+                "/api/settings",
+                Some(json!({ "review_mode": false })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN);
+    }
+    assert_eq!(
+        app.call("GET", "/api/me", None).await.body["review_mode"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn review_mode_still_lets_the_browser_restore_and_export() {
+    let app = TestApp::new().await;
+    let session = app.session().await;
+    let board = app.board().await;
+    let id = app.note(&board, "N", "first").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let res = app
+        .call(
+            "PATCH",
+            &format!("/api/items/{id}"),
+            Some(json!({ "version": 1, "content": { "markdown": "second" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let claude = app.token(Scope::Admin, Actor::Claude).await;
+    app.call_as(
+        &claude,
+        "PATCH",
+        &format!("/api/items/{id}"),
+        Some(json!({ "version": 2, "content": { "markdown": "claude's" } })),
+    )
+    .await;
+
+    // Restore a revision.
+    let revs = app
+        .call_session(&session, "GET", &format!("/api/items/{id}/revisions"), None)
+        .await;
+    let earlier = revs.body["revisions"][1]["id"].as_i64().unwrap();
+    let res = app
+        .call_session(
+            &session,
+            "POST",
+            &format!("/api/items/{id}/restore/{earlier}"),
+            Some(json!({ "version": 3 })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["content"]["markdown"], "second");
+
+    // Bring something back from the trash.
+    app.call("DELETE", &format!("/api/items/{id}"), None).await;
+    let res = app
+        .call_session(&session, "POST", &format!("/api/items/{id}/undelete"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+
+    // Exports: an image of the selection, a link to one, and the PDF route
+    // (no Typeset here, so it answers 409, but review mode doesn't stop it).
+    let res = app
+        .call_session(
+            &session,
+            "POST",
+            &format!("/api/boards/{board}/render"),
+            Some(json!({ "item_ids": [id], "format": "svg" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    let res = app
+        .call_session(
+            &session,
+            "POST",
+            &format!("/api/items/{id}/image-url"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    for route in ["pdf", "pdf-link"] {
+        let res = app
+            .call_session(
+                &session,
+                "POST",
+                &format!("/api/boards/{board}/{route}"),
+                Some(json!({})),
+            )
+            .await;
+        assert_ne!(res.status, StatusCode::FORBIDDEN, "{route}: {:?}", res.body);
+    }
+
+    // But not an edit.
+    let res = app
+        .call_session(
+            &session,
+            "PATCH",
+            &format!("/api/items/{id}"),
+            Some(json!({ "version": 5, "title": "Renamed" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

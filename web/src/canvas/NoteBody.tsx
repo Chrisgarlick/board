@@ -3,14 +3,15 @@
 import { useMemo, useState } from "preact/hooks";
 
 import { renderMarkdown } from "../markdown";
-import { editContent } from "../store";
+import { editContent, readOnly } from "../store";
 import type { NoteContent } from "../types";
 
 export function NoteBody({ id, content }: { id: string; content: NoteContent }) {
   const [editing, setEditing] = useState(false);
   const html = useMemo(() => renderMarkdown(content.markdown), [content.markdown]);
 
-  if (editing) {
+  const ro = readOnly.value;
+  if (editing && !ro) {
     return (
       <textarea
         class="note-editor"
@@ -32,9 +33,9 @@ export function NoteBody({ id, content }: { id: string; content: NoteContent }) 
     <div
       class="note-view"
       tabIndex={0}
-      onDblClick={() => setEditing(true)}
+      onDblClick={() => !ro && setEditing(true)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !ro) {
           e.preventDefault();
           setEditing(true);
         }
@@ -43,7 +44,7 @@ export function NoteBody({ id, content }: { id: string; content: NoteContent }) 
       {content.markdown.trim() ? (
         <div class="markdown" dangerouslySetInnerHTML={{ __html: html }} />
       ) : (
-        <p class="placeholder">Double-click to write.</p>
+        <p class="placeholder">{ro ? "Empty." : "Double-click to write."}</p>
       )}
     </div>
   );

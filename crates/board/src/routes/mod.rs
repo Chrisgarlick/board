@@ -7,7 +7,7 @@
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Extension, Json, Router, middleware};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -29,7 +29,8 @@ use crate::service::flows::{self, FlowRequest};
 use crate::service::items::{self, Geometry, ItemPatch, NewItem};
 use crate::service::moves::{self, MoveRequest};
 use crate::service::{search, tables};
-use crate::types::{Caller, Ctx};
+use crate::settings;
+use crate::types::{Actor, Caller, Ctx};
 
 const DEFAULT_BODY_LIMIT: usize = 1024 * 1024;
 const BATCH_BODY_LIMIT: usize = 2 * 1024 * 1024;
@@ -40,6 +41,7 @@ pub fn api(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/me", get(me))
         .route("/logout", post(logout))
+        .route("/settings", put(update_settings))
         .route("/boards", get(list_boards).post(create_board))
         .route(
             "/boards/{id}",
@@ -164,8 +166,38 @@ async fn board_of_connector(state: &AppState, id: &str) -> AppResult<String> {
 
 // ---------- Auth ----------
 
-async fn me(Extension(caller): Extension<Caller>) -> Json<Value> {
-    Json(json!({ "actor": caller.actor, "scope": caller.scope }))
+async fn me(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+) -> AppResult<Json<Value>> {
+    let review_mode = settings::review_mode(&state.pool).await?;
+    Ok(Json(json!({
+        "actor": caller.actor,
+        "scope": caller.scope,
+        "review_mode": review_mode,
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsBody {
+    review_mode: bool,
+}
+
+/// `PUT /api/settings`: switch review mode. Only a signed-in browser may:
+/// tokens (Claude, scripts, Design) can't turn the browser's editing on or off.
+async fn update_settings(
+    State(state): State<AppState>,
+    Extension(caller): Extension<Caller>,
+    ApiJson(body): ApiJson<SettingsBody>,
+) -> AppResult<Json<Value>> {
+    if caller.actor != Actor::User {
+        return Err(AppError::Forbidden(
+            "only a signed-in browser can change Board's settings",
+        ));
+    }
+    settings::set_review_mode(&state.pool, body.review_mode).await?;
+    Ok(Json(json!({ "review_mode": body.review_mode })))
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {

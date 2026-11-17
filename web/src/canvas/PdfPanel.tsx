@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import { api, ApiError, downloadPdf, type PdfOptions } from "../api";
-import { board, frameIds, itemIds, items, report, status } from "../store";
+import { board, frameIds, itemIds, items, readOnly, report, status } from "../store";
 import type { Item } from "../types";
 
 const BAND = 200;
@@ -85,7 +85,7 @@ export function PdfPanel({ onClose }: { onClose: () => void }) {
 
   async function setClient(slug: string) {
     const current = board.value;
-    if (!current) return;
+    if (!current || readOnly.value) return;
     try {
       board.value = await api.updateBoard(current.id, { client: slug || null });
       setProof(null);
@@ -121,7 +121,11 @@ export function PdfPanel({ onClose }: { onClose: () => void }) {
           <form class="settings" onSubmit={(e) => e.preventDefault()}>
             <label>
               Brand
-              <select value={b.client ?? ""} onChange={(e) => void setClient(e.currentTarget.value)}>
+              <select
+                value={b.client ?? ""}
+                disabled={readOnly.value}
+                title={readOnly.value ? "Review mode: the client is set by Claude, or with editing tools on" : undefined}
+                onChange={(e) => void setClient(e.currentTarget.value)}>
                 <option value="">Typeset's default look</option>
                 {(clients ?? []).map((c) => (
                   <option key={c.slug} value={c.slug}>

@@ -25,6 +25,8 @@ BIN=./target/debug/board
 CONFIG=(--config "$TMP/board.toml")
 
 TOKEN=$("$BIN" "${CONFIG[@]}" token create --name e2e --scope admin --actor api 2>/dev/null)
+# The browser suites draw and edit, so turn the editing tools on.
+"$BIN" "${CONFIG[@]}" review-mode off 2>/dev/null
 # Start the binary itself in the background (not via a function or subshell),
 # so $! is the server's own pid and the cleanup trap really stops it.
 "$BIN" "${CONFIG[@]}" serve >"$TMP/serve.log" 2>&1 &

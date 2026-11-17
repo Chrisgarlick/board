@@ -16,6 +16,7 @@ import {
   items,
   membersOf,
   place,
+  readOnly,
   select,
   selection,
   tool,
@@ -84,7 +85,7 @@ function onPointer(move: (e: PointerEvent) => void, end: (e: PointerEvent) => vo
 export function pressItem(e: PointerEvent, id: string): void {
   if (e.button !== 0) return;
   e.stopPropagation();
-  if (tool.value === "connector") {
+  if (tool.value === "connector" && !readOnly.value) {
     startConnect(e, id, "auto");
     return;
   }
@@ -101,6 +102,8 @@ export function pressItem(e: PointerEvent, id: string): void {
     select([id]);
   }
 
+  // Review mode: pressing selects, nothing moves.
+  if (readOnly.value) return;
   const start = { x: e.clientX, y: e.clientY };
   const selected = [...selection.value].map(item).filter((i): i is Item => !!i && !i.locked);
   if (selected.length === 0) return;
@@ -194,7 +197,7 @@ function snapToGuides(
 // ---------- Resize ----------
 
 export function pressResize(e: PointerEvent, id: string, minW = 40, minH = 24): void {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || readOnly.value) return;
   e.stopPropagation();
   const i = item(id);
   if (!i || i.locked) return;
@@ -272,6 +275,7 @@ export const DEFAULT_SIZE: Record<string, { w: number; h: number }> = {
 
 /** Press on empty canvas with a creation tool: click places at default size, drag sets the size. */
 export function pressCreate(e: PointerEvent): void {
+  if (readOnly.value) return;
   const t = tool.value;
   const start = canvasPoint(e);
   let end = start;
@@ -363,7 +367,7 @@ export function startConnect(
 ): void {
   e.stopPropagation();
   const from = item(fromId);
-  if (!from) return;
+  if (!from || readOnly.value) return;
   const startSide = side === "auto" ? (nearestAnchor(from, canvasPoint(e), view.value.zoom) ?? "auto") : side;
   connecting.value = { from: fromId, side: startSide, to: canvasPoint(e) };
   document.body.classList.add("is-dragging");

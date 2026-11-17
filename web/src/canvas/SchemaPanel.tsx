@@ -7,6 +7,7 @@ import {
   cardsShowing,
   createTable,
   deleteTable,
+  readOnly,
   schemaVersion,
   select,
   selectedItems,
@@ -29,6 +30,7 @@ export function SchemaPanel({ onClose }: { onClose: () => void }) {
   const card = selected.length === 1 && selected[0]!.card_type === "schema" ? selected[0]! : null;
   const onCard = card ? (card.content as SchemaCardContent).table_ids : [];
   const stack = board.value?.stack;
+  const ro = readOnly.value;
 
   async function add() {
     const taken = new Set(list.map((t) => t.name.toLowerCase()));
@@ -54,7 +56,9 @@ export function SchemaPanel({ onClose }: { onClose: () => void }) {
       </header>
       <p class="panel-note">
         {list.length === 0
-          ? "No tables yet. Add one here, or on a schema card."
+          ? ro
+            ? "No tables yet."
+            : "No tables yet. Add one here, or on a schema card."
           : `${list.length} ${list.length === 1 ? "table" : "tables"}, version ${schemaVersion.value}.`}
         {stack ? ` Stack: ${stack}.` : ""}
       </p>
@@ -79,24 +83,28 @@ export function SchemaPanel({ onClose }: { onClose: () => void }) {
                   </p>
                 )}
               </div>
-              <div class="schema-list-actions">
-                {card && !onCard.includes(t.id) && (
-                  <button type="button" title={`Show on ${card.title}`} onClick={() => setCardTables(card.id, [...onCard, t.id])}>
-                    Show
+              {!ro && (
+                <div class="schema-list-actions">
+                  {card && !onCard.includes(t.id) && (
+                    <button type="button" title={`Show on ${card.title}`} onClick={() => setCardTables(card.id, [...onCard, t.id])}>
+                      Show
+                    </button>
+                  )}
+                  <button type="button" class="text-button" aria-label={`Delete ${t.name}`} onClick={() => void deleteTable(t.id)}>
+                    Delete
                   </button>
-                )}
-                <button type="button" class="text-button" aria-label={`Delete ${t.name}`} onClick={() => void deleteTable(t.id)}>
-                  Delete
-                </button>
-              </div>
+                </div>
+              )}
             </li>
           );
         })}
       </ul>
-      <button type="button" onClick={() => void add()}>
-        {card ? `New table on ${card.title}` : "New table"}
-      </button>
-      {!card && list.length > 0 && <p class="panel-note">Select a schema card to show tables on it.</p>}
+      {!ro && (
+        <button type="button" onClick={() => void add()}>
+          {card ? `New table on ${card.title}` : "New table"}
+        </button>
+      )}
+      {!ro && !card && list.length > 0 && <p class="panel-note">Select a schema card to show tables on it.</p>}
     </aside>
   );
 }

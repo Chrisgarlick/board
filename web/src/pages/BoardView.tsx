@@ -33,6 +33,7 @@ import {
   items,
   load,
   place,
+  readOnly,
   redo,
   remove,
   report,
@@ -91,6 +92,14 @@ export function BoardView({ id }: { id: string }) {
       if (typing(e)) return;
       const cmd = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
+      // Review mode keeps only the keys that look: select all, Escape, Space
+      // to pan, and fit (Shift+1/2).
+      const looking =
+        (cmd && key === "a") ||
+        e.key === "Escape" ||
+        e.key === " " ||
+        (e.shiftKey && (e.code === "Digit1" || e.code === "Digit2"));
+      if (readOnly.value && !looking) return;
 
       if (cmd && key === "z") {
         e.preventDefault();
@@ -164,9 +173,10 @@ export function BoardView({ id }: { id: string }) {
         mat.current?.classList.remove("is-panning-ready");
       }
     }
-    const copy = (e: ClipboardEvent) => !typing(e) && onCopy(e, false);
-    const cut = (e: ClipboardEvent) => !typing(e) && onCopy(e, true);
-    const paste = (e: ClipboardEvent) => !typing(e) && onPaste(e);
+    // No board clipboard in review mode: the browser's own copy still works.
+    const copy = (e: ClipboardEvent) => !readOnly.value && !typing(e) && onCopy(e, false);
+    const cut = (e: ClipboardEvent) => !readOnly.value && !typing(e) && onCopy(e, true);
+    const paste = (e: ClipboardEvent) => !readOnly.value && !typing(e) && onPaste(e);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("copy", copy);
@@ -287,6 +297,7 @@ export function BoardView({ id }: { id: string }) {
   const minor = 20 * v.zoom;
   const far = v.zoom < FAR_ZOOM;
   const t = tool.value;
+  const ro = readOnly.value;
 
   // Viewport culling on big boards.
   let visible: (id: string) => boolean = () => true;
@@ -307,6 +318,14 @@ export function BoardView({ id }: { id: string }) {
           Boards
         </button>
         <BoardTitle />
+        {ro && (
+          <span
+            class="review-badge"
+            title="Editing tools are off: view, history, export and restore. Turn them on in your account settings (on the board list)."
+          >
+            Review mode
+          </span>
+        )}
         <div class="topbar-spacer" />
         <div class="zoom" role="group" aria-label="Zoom">
           <button type="button" class="icon-button" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
@@ -357,13 +376,14 @@ export function BoardView({ id }: { id: string }) {
           const panning = e.button === 1 || spaceDown.current || t === "hand";
           if (panning) {
             startPan(e);
-          } else if (e.button === 0 && t === "select") {
+          } else if (e.button === 0 && (t === "select" || ro)) {
             pressMarquee(e);
           } else if (e.button === 0 && t !== "connector") {
             pressCreate(e);
           }
         }}
         onDblClick={(e) => {
+          if (ro) return;
           const target = e.target as Element;
           if (target !== e.currentTarget && !target.classList.contains("world") && !target.classList.contains("frame")) return;
           const r = e.currentTarget.getBoundingClientRect();
@@ -388,13 +408,13 @@ export function BoardView({ id }: { id: string }) {
         <StyleBar />
         <Toolbar />
 
-        {itemIds.value.length + frameIds.value.length === 0 && !adding && (
+        {itemIds.value.length + frameIds.value.length === 0 && !adding && !ro && (
           <p class="mat-hint">
             Pick a tool on the left, or double-click anywhere to add a note, checklist, feature, schema, sitemap, sticky or shape.
           </p>
         )}
 
-        {adding && (
+        {adding && !ro && (
           <div
             class="add-menu"
             role="menu"
@@ -472,6 +492,8 @@ function BoardTitle() {
       report(err, "rename the board");
     }
   }
+
+  if (readOnly.value) return <h1 class="board-title">{b.title}</h1>;
 
   return draft === null ? (
     <h1 class="board-title" title="Double-click to rename" onDblClick={() => setDraft(b.title)}>

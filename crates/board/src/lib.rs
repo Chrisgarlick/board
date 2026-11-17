@@ -21,6 +21,7 @@ pub mod render;
 pub mod routes;
 pub mod schema;
 pub mod service;
+pub mod settings;
 pub mod signing;
 pub mod types;
 pub mod typeset;

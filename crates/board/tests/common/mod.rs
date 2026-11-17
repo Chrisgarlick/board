@@ -129,6 +129,44 @@ impl TestApp {
         self.send(request).await
     }
 
+    /// A browser session (the cookie value), as a login link would start.
+    pub async fn session(&self) -> String {
+        let now = self.clock.now();
+        let code = auth::create_login_code(&self.state.pool, now)
+            .await
+            .unwrap();
+        auth::redeem_login_code(&self.state.pool, &code, now)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    /// A request from the browser: the session cookie and Board's own Origin.
+    pub async fn call_session(
+        &self,
+        session: &str,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> Res {
+        let builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(
+                header::COOKIE,
+                format!("{}={session}", auth::SESSION_COOKIE),
+            )
+            .header(header::ORIGIN, ORIGIN);
+        let request = match body {
+            Some(body) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .unwrap();
+        self.send(request).await
+    }
+
     pub async fn board(&self) -> String {
         let res = self
             .call(

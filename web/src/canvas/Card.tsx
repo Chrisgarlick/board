@@ -7,6 +7,7 @@ import {
   editingId,
   fresh,
   keepMine,
+  readOnly,
   rememberEdit,
   remove,
   select,
@@ -33,7 +34,8 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
   const r = liveRect(item);
   const selected = selection.value.has(item.id);
   const lifted = moving.value.has(item.id);
-  const editingTitle = editingId.value === item.id;
+  const ro = readOnly.value;
+  const editingTitle = editingId.value === item.id && !ro;
   const title = item.title ?? "";
   const label = LABELS[item.card_type ?? "note"];
   const color = item.style?.color ? ` c-${item.style.color}` : "";
@@ -61,7 +63,11 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
         {editingTitle ? (
           <CardTitleInput id={item.id} title={title} />
         ) : (
-          <h2 class="card-title" onDblClick={() => (editingId.value = item.id)} title="Double-click to rename">
+          <h2
+            class="card-title"
+            onDblClick={ro ? undefined : () => (editingId.value = item.id)}
+            title={ro ? undefined : "Double-click to rename"}
+          >
             {title || <span class="placeholder">Untitled</span>}
           </h2>
         )}
@@ -71,16 +77,18 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
         <span class="card-meta" aria-live="polite">
           {state.saving.value ? "Saving" : ""}
         </span>
-        <button
-          type="button"
-          class="icon-button card-delete"
-          aria-label="Move to trash"
-          title="Move to trash (Delete)"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => void remove([item.id])}
-        >
-          ×
-        </button>
+        {!ro && (
+          <button
+            type="button"
+            class="icon-button card-delete"
+            aria-label="Move to trash"
+            title="Move to trash (Delete)"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => void remove([item.id])}
+          >
+            ×
+          </button>
+        )}
       </header>
 
       {conflict && (
@@ -116,7 +124,7 @@ export function Card({ state, far }: { state: ItemState; far: boolean }) {
         </div>
       )}
 
-      {!item.locked && (
+      {!item.locked && !ro && (
         <div class="card-resize" aria-hidden="true" onPointerDown={(e) => pressResize(e, item.id, MIN_W, MIN_H)} />
       )}
     </article>

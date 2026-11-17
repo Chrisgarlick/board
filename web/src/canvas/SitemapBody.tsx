@@ -9,7 +9,7 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 
 import { pageId } from "../ids";
-import { editContent, item, rememberEdit, type ContentPatch } from "../store";
+import { editContent, item, readOnly, rememberEdit, type ContentPatch } from "../store";
 import type { SitemapContent, SitemapNode } from "../types";
 
 /** A node's place in the tree: child indexes from the root. The root is []. */
@@ -78,7 +78,10 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
     box.current?.querySelector<HTMLInputElement>(`[data-page="${target}"] .page-title`)?.focus();
   });
 
+  const ro = readOnly.value;
+
   function save(next: SitemapNode, typed = false) {
+    if (ro) return;
     const patch = { content: { root: next } };
     if (typed) {
       before.current ??= { content: item(id)?.content };
@@ -208,7 +211,7 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
             if (drop) onDrop(path, drop.where);
           }}
         >
-          {!isRoot && (
+          {!isRoot && !ro && (
             <span
               class="page-handle"
               draggable
@@ -231,13 +234,14 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
             value={node.title}
             placeholder="Page title"
             aria-label="Page title"
+            readOnly={ro}
             onInput={(e) => save(update(root, path, (n) => ({ ...n, title: e.currentTarget.value })), true)}
             onBlur={(e) => {
               // A new page gets a slug from its title, once.
               const title = e.currentTarget.value;
               const latest = (item(id)?.content as SitemapContent | undefined)?.root ?? root;
               const current = at(latest, path);
-              if (current && !current.slug && title.trim()) {
+              if (current && !current.slug && title.trim() && !ro) {
                 const slug = slugFor(title, parentSlug);
                 editContent(id, { content: { root: update(latest, path, (n) => ({ ...n, slug })) } });
               }
@@ -266,6 +270,7 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
             value={node.slug ?? ""}
             placeholder="/slug"
             aria-label="Slug"
+            readOnly={ro}
             spellcheck={false}
             onInput={(e) => {
               const slug = e.currentTarget.value;
@@ -280,22 +285,25 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
             onBlur={endTyping}
             onKeyDown={(e) => e.stopPropagation()}
           />
-          <span class="page-actions">
-            <button type="button" class="icon-button" aria-label="Add a page under this one" title="Add a page under this one" onClick={() => addChild(path)}>
-              +
-            </button>
-            {!isRoot && (
-              <button type="button" class="icon-button" aria-label="Remove page" title="Remove page" onClick={() => remove(path)}>
-                ×
+          {!ro && (
+            <span class="page-actions">
+              <button type="button" class="icon-button" aria-label="Add a page under this one" title="Add a page under this one" onClick={() => addChild(path)}>
+                +
               </button>
-            )}
-          </span>
+              {!isRoot && (
+                <button type="button" class="icon-button" aria-label="Remove page" title="Remove page" onClick={() => remove(path)}>
+                  ×
+                </button>
+              )}
+            </span>
+          )}
         </div>
         <input
           class={`page-purpose${node.purpose ? " has-purpose" : ""}`}
           value={node.purpose ?? ""}
           placeholder="What this page is for"
           aria-label={`Purpose of ${node.title || "this page"}`}
+          readOnly={ro}
           onInput={(e) => {
             const purpose = e.currentTarget.value;
             save(
@@ -323,7 +331,7 @@ export function SitemapBody({ id, content }: { id: string; content: SitemapConte
       <ul class="sitemap-tree">
         {row(root, [], undefined)}
       </ul>
-      <p class="sitemap-hint">Enter adds a page. Tab nests it, Shift+Tab un-nests. Drag the handle to move.</p>
+      {!ro && <p class="sitemap-hint">Enter adds a page. Tab nests it, Shift+Tab un-nests. Drag the handle to move.</p>}
     </div>
   );
 }

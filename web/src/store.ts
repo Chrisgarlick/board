@@ -9,7 +9,7 @@
 //   debounced, one save in flight, each using the version the last returned.
 // - Every user action records how to undo and redo it (spec 10.4).
 
-import { batch, computed, signal, type Signal } from "@preact/signals";
+import { batch, computed, effect, signal, type Signal } from "@preact/signals";
 
 import { api, ApiError, type Op } from "./api";
 import type {
@@ -61,6 +61,19 @@ export const selection = signal<ReadonlySet<string>>(new Set());
 export const selectedConnector = signal<string | null>(null);
 export const editingId = signal<string | null>(null);
 export const tool = signal<Tool>("select");
+/**
+ * Review mode (the default): the browser is a review layer. Editing tools are
+ * hidden, and the store's write functions refuse. Viewing, history, restoring
+ * and exports still work. Set from `/api/me` and the account panel's switch.
+ */
+export const readOnly = signal(true);
+
+// Turning review mode on mid-edit drops the drawing tool and any open editor.
+effect(() => {
+  if (!readOnly.value) return;
+  tool.value = "select";
+  editingId.value = null;
+});
 export const status = signal<{ kind: "info" | "error"; text: string } | null>(null);
 /** Items changed by someone else (another tab, Claude, a script) in the last few seconds. */
 export const fresh = signal<ReadonlySet<string>>(new Set());
@@ -109,6 +122,19 @@ export const selectedItems = computed(() =>
 export function report(err: unknown, action: string): void {
   const message = err instanceof ApiError ? err.body.message : String(err);
   status.value = { kind: "error", text: `Couldn't ${action}: ${message}` };
+}
+
+const REVIEW_MODE_MESSAGE = "Board is in review mode. Turn editing tools on in your account settings to edit here.";
+
+function reviewModeError(): ApiError {
+  return new ApiError(403, { error: "review_mode", message: REVIEW_MODE_MESSAGE });
+}
+
+/** False (and says why) when review mode is on. For writes outside the store. */
+export function canWrite(): boolean {
+  if (!readOnly.value) return true;
+  status.value = { kind: "info", text: REVIEW_MODE_MESSAGE };
+  return false;
 }
 
 export function select(ids: Iterable<string>): void {
@@ -250,6 +276,8 @@ function isConnector(v: unknown): v is Connector {
 export async function runOps(ops: Op[]): Promise<Record<string, string>> {
   const b = board.value;
   if (!b || ops.length === 0) return {};
+  // In review mode only restoring from the trash is allowed.
+  if (readOnly.value && ops.some((o) => !o.op.startsWith("undelete_"))) throw reviewModeError();
   const result = await api.batch(b.id, ops);
   batch(() => {
     const upserts: Item[] = [];
@@ -408,6 +436,7 @@ async function runSteps(steps: Step[]): Promise<void> {
 }
 
 export async function undo(): Promise<void> {
+  if (!canWrite()) return;
   const entry = undoStack.pop();
   canUndo.value = undoStack.length > 0;
   if (!entry) return;
@@ -421,6 +450,7 @@ export async function undo(): Promise<void> {
 }
 
 export async function redo(): Promise<void> {
+  if (!canWrite()) return;
   const entry = redoStack.pop();
   canRedo.value = redoStack.length > 0;
   if (!entry) return;
@@ -749,7 +779,7 @@ const queues = new Map<string, SaveQueue>();
 /** Change an item's title, content or style locally and save it (debounced). */
 export function editContent(id: string, patch: ContentPatch, immediate = false): void {
   const state = items.get(id);
-  if (!state) return;
+  if (!state || !canWrite()) return;
   state.item.value = applyLocal(state.item.value, patch);
   let queue = queues.get(id);
   if (!queue) {
@@ -920,7 +950,7 @@ const tableQueues = new Map<string, TableQueue>();
 /** Change a table locally and save it (debounced). */
 export function editTable(id: string, patch: TablePatch, immediate = false): void {
   const t = tables.value.get(id);
-  if (!t) return;
+  if (!t || !canWrite()) return;
   const next = new Map(tables.value);
   next.set(id, { ...t, ...patch, definition: patch.definition ?? t.definition });
   tables.value = next;
@@ -945,7 +975,7 @@ export async function createTable(
   cardId?: string,
 ): Promise<string | null> {
   const b = board.value;
-  if (!b) return null;
+  if (!b || !canWrite()) return null;
   try {
     const w = await api.createTable(b.id, { name, definition, ...(cardId ? { item_id: cardId } : {}) });
     applyWritten(w);
@@ -964,7 +994,7 @@ export async function createTable(
 /** Move a table to the trash. Asks first when other tables reference it. */
 export async function deleteTable(id: string): Promise<void> {
   const t = tables.value.get(id);
-  if (!t) return;
+  if (!t || !canWrite()) return;
   tableQueues.get(id)?.cancel();
   try {
     let w: TableWritten;

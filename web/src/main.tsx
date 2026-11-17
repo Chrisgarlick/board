@@ -9,14 +9,15 @@ import { explain, passkeysSupported, signInWithPasskey } from "./passkeys";
 import { BoardList } from "./pages/BoardList";
 import { BoardView } from "./pages/BoardView";
 import { navigate, path, route } from "./router";
-import { status } from "./store";
+import { readOnly, status } from "./store";
 
 type Auth = "checking" | "in" | "out" | "offline";
 const auth = signal<Auth>("checking");
 
 async function checkAuth(): Promise<void> {
   try {
-    await api.me();
+    const me = await api.me();
+    readOnly.value = me.review_mode !== false;
     auth.value = "in";
   } catch (err) {
     auth.value = err instanceof ApiError && err.status === 401 ? "out" : "offline";

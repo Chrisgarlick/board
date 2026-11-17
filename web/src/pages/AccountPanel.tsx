@@ -1,10 +1,11 @@
-// Passkeys for signing in (and logging out). Opened from the board list.
+// Passkeys for signing in, the editing-tools switch, and logging out.
+// Opened from the board list.
 
 import { useEffect, useState } from "preact/hooks";
 
 import { api } from "../api";
 import { addPasskey, deviceName, explain, passkeysSupported } from "../passkeys";
-import { report, status } from "../store";
+import { readOnly, report, status } from "../store";
 import { ago } from "../time";
 
 export interface Passkey {
@@ -63,6 +64,19 @@ export function AccountPanel({
     }
   }
 
+  const [switching, setSwitching] = useState(false);
+  async function setEditing(on: boolean) {
+    setSwitching(true);
+    try {
+      const r = await api.setReviewMode(!on);
+      readOnly.value = r.review_mode;
+    } catch (err) {
+      report(err, "change the editing tools");
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   async function logout() {
     try {
       await api.logout();
@@ -72,10 +86,10 @@ export function AccountPanel({
   }
 
   return (
-    <aside class="panel" aria-label="Passkeys">
+    <aside class="panel" aria-label="Account">
       <header class="panel-header">
-        <h2>Passkeys</h2>
-        <button type="button" class="icon-button" aria-label="Close passkeys" onClick={onClose}>
+        <h2>Account</h2>
+        <button type="button" class="icon-button" aria-label="Close account" onClick={onClose}>
           ×
         </button>
       </header>
@@ -123,6 +137,22 @@ export function AccountPanel({
       ) : (
         <p class="panel-note">This browser doesn't support passkeys.</p>
       )}
+      <hr class="panel-rule" />
+      <label class="setting-switch">
+        Editing tools
+        <input
+          type="checkbox"
+          role="switch"
+          checked={!readOnly.value}
+          disabled={switching}
+          aria-describedby="editing-tools-note"
+          onChange={(e) => void setEditing(e.currentTarget.checked)}
+        />
+      </label>
+      <p class="panel-note" id="editing-tools-note">
+        Off: Board is a review layer: view, history, export and restore. Claude still edits through MCP. Turn on to
+        edit in the browser.
+      </p>
       <hr class="panel-rule" />
       <button type="button" class="text-button" onClick={() => void logout()}>
         Log out of this browser

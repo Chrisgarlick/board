@@ -12,6 +12,7 @@ import {
   historyFor,
   pages,
   place,
+  readOnly,
   remove,
   report,
   reshape,
@@ -65,7 +66,8 @@ const EDGE = 8;
 
 export function StyleBar() {
   const connectorId = selectedConnector.value;
-  if (connectorId) return <ConnectorBar id={connectorId} />;
+  // Review mode: a connector has nothing to review; items keep History and Export.
+  if (connectorId) return readOnly.value ? null : <ConnectorBar id={connectorId} />;
   return <ItemBar />;
 }
 
@@ -103,6 +105,19 @@ function ItemBar() {
   const alignable = list.every((i) => i.kind === "shape" || i.kind === "text");
   const first = list[0]!;
   const locked = list.every((i) => i.locked);
+  const name = first.title ?? (first.kind === "frame" ? "frame" : "selection");
+
+  if (readOnly.value)
+    return (
+      <div ref={el} class="style-bar" role="toolbar" aria-label="Review">
+        {list.length === 1 && (
+          <button type="button" title="Saved versions of this item" onClick={() => (historyFor.value = first.id)}>
+            History
+          </button>
+        )}
+        <ExportMenu ids={ids} name={name} />
+      </div>
+    );
 
   return (
     <div ref={el} class="style-bar" role="toolbar" aria-label="Style">
@@ -169,7 +184,7 @@ function ItemBar() {
           History
         </button>
       )}
-      <ExportMenu ids={ids} name={first.title ?? (first.kind === "frame" ? "frame" : "selection")} />
+      <ExportMenu ids={ids} name={name} />
       <button type="button" class="danger" title="Delete" onClick={() => void remove(ids)}>
         Delete
       </button>
